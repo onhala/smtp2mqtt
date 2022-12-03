@@ -1,4 +1,4 @@
-FROM alpine:latest
+FROM arm32v7/alpine:latest
 WORKDIR /emqtt
 COPY emqtt.py requirements.txt ./
 RUN apk add --no-cache python3 py3-pip && pip3 install -r requirements.txt
