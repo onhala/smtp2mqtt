@@ -20,7 +20,7 @@ defaults = {
     "MQTT_PASSWORD": "",
     "MQTT_TOPIC": "smtp2mqtt",
     "MQTT_PAYLOAD": "ON",
-    "MQTT_RESET_TIME": "1O",
+    "MQTT_RESET_TIME": "10",
     "MQTT_RESET_PAYLOAD": "OFF",
     "SAVE_ATTACHMENTS": "False",
     "SAVE_ATTACHMENTS_DURING_RESET_TIME": "False",
