@@ -18,7 +18,7 @@ defaults = {
     "MQTT_PORT": 1883,
     "MQTT_USERNAME": "",
     "MQTT_PASSWORD": "",
-    "MQTT_TOPIC": "emqtt",
+    "MQTT_TOPIC": "smtp2mqtt",
     "MQTT_PAYLOAD": "ON",
     "MQTT_RESET_TIME": "300",
     "MQTT_RESET_PAYLOAD": "OFF",
@@ -38,7 +38,7 @@ for key, value in config.items():
 
 level = logging.DEBUG if config["DEBUG"] else logging.INFO
 
-log = logging.getLogger("emqtt")
+log = logging.getLogger("smtp2mqtt")
 log.setLevel(level)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
@@ -48,7 +48,7 @@ ch.setFormatter(formatter)
 log.addHandler(ch)
 
 
-class EMQTTHandler:
+class smtp2mqttHandler:
     def __init__(self, loop):
         self.loop = loop
         self.reset_time = int(config["MQTT_RESET_TIME"])
@@ -67,7 +67,7 @@ class EMQTTHandler:
             envelope.content.decode("utf8", errors="replace")[:250],
         )
         topic = "{}/{}".format(
-            config["MQTT_TOPIC"], envelope.mail_from.replace("@", "")
+            config["MQTT_TOPIC"], envelope.mail_from.replace("@", "-")
         )
         self.mqtt_publish(topic, config["MQTT_PAYLOAD"])
 
@@ -143,13 +143,13 @@ if __name__ == "__main__":
     # If there's a dir called log - set up a filehandler
     if os.path.exists("log"):
         log.info("Setting up a filehandler")
-        fh = logging.FileHandler("log/emqtt.log")
+        fh = logging.FileHandler("log/smtp2mqtt.log")
         fh.setFormatter(formatter)
         log.addHandler(fh)
 
     loop = asyncio.get_event_loop()
     c = Controller(
-        handler=EMQTTHandler(loop),
+        handler=smtp2mqttHandler(loop),
         loop=loop,
         hostname="0.0.0.0",
         port=config["SMTP_PORT"],
