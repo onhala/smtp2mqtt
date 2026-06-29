@@ -79,6 +79,12 @@ docker run -d \
 > [!NOTE]
 > Ensure your volume directories are mapped to `/app/log` and `/app/attachments` inside the container to match the unified workspace of the modern image.
 
+### 3. Docker Healthcheck
+
+The Docker container now includes a built-in `HEALTHCHECK` directive that runs a lightweight, zero-dependency Python script (`healthcheck.py`) every 30 seconds.
+
+The healthcheck connects to the SMTP port, validates that the SMTP server is active, and verifies that it is returning a healthy SMTP banner (`220`). If the container ever freezes, Docker will automatically flag it as `unhealthy`. When run with `--restart always`, Docker will automatically reboot the container to restore your smart home automation flows instantly.
+
 ---
 
 ## Maintenance & Housekeeping
@@ -89,6 +95,37 @@ If you are saving attachments, you can set up a simple cron job to clean up olde
 # Deletes snapshot files older than 20 days inside the container
 docker exec smtp2mqtt find attachments -type f -ctime +20 -delete
 ```
+
+---
+
+## Development & Testing
+
+This project contains a comprehensive automated test suite to ensure robustness, compatibility, and prevent regressions.
+
+### Running Tests Locally
+
+1. Create and activate a Python virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+2. Install dependencies (including testing tools):
+   ```bash
+   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
+   ```
+
+3. Run the test suite:
+   ```bash
+   pytest tests/ -v
+   ```
+
+The test suite includes both mock-based unit tests (testing attachment parsing and MQTT publishing logic without needing an active broker) and a full, end-to-end integration test (which spins up the real SMTP server on a random high port, initiates a real SMTP transaction using `smtplib`, and gracefully shuts down, confirming logs match expected behaviors).
+
+### Automated Testing (CI)
+
+Every code push or Pull Request to the repository triggers a GitHub Actions workflow (`.github/workflows/test.yml`). It sets up a clean environment, installs all dependencies, and runs the entire `pytest` suite. This gives you a clear visual indicator of code health directly on GitHub.
 
 ---
 
