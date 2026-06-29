@@ -888,5 +888,212 @@ async def test_monitor_exceptions_handling(monkeypatch):
     handler.cancel_all_resets()
 
 
+@pytest.mark.asyncio
+async def test_save_attachments_returns_info():
+    """Verify that save_attachments returns correct filename and absolute path info."""
+    if os.path.exists("attachments"):
+        shutil.rmtree("attachments")
+
+    smtp2mqtt.config["SAVE_ATTACHMENTS"] = True
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    msg = EmailMessage()
+    msg["Subject"] = "Test trigger"
+    msg["From"] = "camera@house.com"
+    msg.set_content("Motion detected!")
+    
+    fake_image = b"XYZ-FAKE-IMAGE-DATA-XYZ"
+    msg.add_attachment(fake_image, maintype="image", subtype="jpeg", filename="test_returned_info.jpg")
+
+    saved_info = handler.save_attachments(msg, "smtp2mqtt/camera", is_triggered=False)
+
+    assert len(saved_info) == 1
+    assert saved_info[0]["filename"] == "test_returned_info.jpg"
+    assert saved_info[0]["path"] == os.path.abspath(os.path.join("attachments", "test_returned_info.jpg"))
+
+    # Cleanup
+    if os.path.exists("attachments"):
+        shutil.rmtree("attachments")
 
 
+@pytest.mark.asyncio
+async def test_handle_web_client_serves_attachments():
+    """Verify that a valid attachment is served correctly with correct headers and MIME types."""
+    os.makedirs("attachments", exist_ok=True)
+    file_path = os.path.join("attachments", "test_doc.pdf")
+    fake_content = b"PDF-DUMMY-CONTENT"
+    with open(file_path, "wb") as f:
+        f.write(fake_content)
+
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    class MockReader:
+        async def readline(self):
+            if not hasattr(self, "called"):
+                self.called = True
+                return b"GET /attachments/test_doc.pdf HTTP/1.1\r\n"
+            return b"\r\n"
+
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+            self.is_closed = False
+
+        def write(self, data):
+            self.write_data += data
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.is_closed = True
+
+        async def wait_closed(self):
+            pass
+
+    reader = MockReader()
+    writer = MockWriter()
+
+    try:
+        await handler.handle_web_client(reader, writer)
+    finally:
+        # Cleanup
+        if os.path.exists("attachments"):
+            shutil.rmtree("attachments")
+        handler.cancel_all_resets()
+
+    assert b"200 OK" in writer.write_data
+    assert b"Content-Type: application/pdf" in writer.write_data
+    assert b"Content-Disposition: inline; filename=\"test_doc.pdf\"" in writer.write_data
+    assert fake_content in writer.write_data
+    assert writer.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_handle_web_client_prevents_path_traversal():
+    """Verify that path traversal attempts are sanitized/neutralized and fail safe."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    class MockReader:
+        async def readline(self):
+            if not hasattr(self, "called"):
+                self.called = True
+                return b"GET /attachments/../../etc/passwd HTTP/1.1\r\n"
+            return b"\r\n"
+
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+            self.is_closed = False
+
+        def write(self, data):
+            self.write_data += data
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.is_closed = True
+
+        async def wait_closed(self):
+            pass
+
+    reader = MockReader()
+    writer = MockWriter()
+
+    try:
+        await handler.handle_web_client(reader, writer)
+    finally:
+        handler.cancel_all_resets()
+
+    assert b"404 Not Found" in writer.write_data
+    assert b"Attachment Not Found" in writer.write_data
+    assert writer.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_handle_web_client_attachment_not_found():
+    """Verify that requesting a non-existent attachment returns a 404 response."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    class MockReader:
+        async def readline(self):
+            if not hasattr(self, "called"):
+                self.called = True
+                return b"GET /attachments/missing_file.png HTTP/1.1\r\n"
+            return b"\r\n"
+
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+            self.is_closed = False
+
+        def write(self, data):
+            self.write_data += data
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.is_closed = True
+
+        async def wait_closed(self):
+            pass
+
+    reader = MockReader()
+    writer = MockWriter()
+
+    try:
+        await handler.handle_web_client(reader, writer)
+    finally:
+        handler.cancel_all_resets()
+
+    assert b"404 Not Found" in writer.write_data
+    assert b"Attachment Not Found" in writer.write_data
+    assert writer.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_monitor_mqtt_broker_logs_state_changes_to_actions(monkeypatch):
+    """Verify that MQTT broker monitor logs state changes (system actions) correctly on transition."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    connection_states = [True, False, True]
+    state_index = 0
+
+    def mock_check_socket_connection(host, port):
+        nonlocal state_index
+        val = connection_states[state_index]
+        if state_index < len(connection_states) - 1:
+            state_index += 1
+        return val
+
+    monkeypatch.setattr(handler, "_check_socket_connection", mock_check_socket_connection)
+
+    sleep_count = 0
+    async def mock_sleep(seconds):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 3:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+    try:
+        await handler.monitor_mqtt_broker()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        handler.cancel_all_resets()
+
+    system_actions = [a for a in handler.recent_actions if a["type"] == "system"]
+    assert len(system_actions) == 2
+    assert "Online (Reconnected)" in system_actions[0]["payload"]
+    assert system_actions[0]["status"] == "SUCCESS"
+    assert "Offline (Unreachable)" in system_actions[1]["payload"]
+    assert system_actions[1]["status"] == "FAILED"

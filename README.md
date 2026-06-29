@@ -1,9 +1,15 @@
 # smtp2mqtt
 
+[![Python CI](https://github.com/onhala/smtp2mqtt/actions/workflows/test.yml/badge.svg)](https://github.com/onhala/smtp2mqtt/actions/workflows/test.yml)
+[![Latest Release](https://img.shields.io/github/v/release/onhala/smtp2mqtt?color=blue)](https://github.com/onhala/smtp2mqtt/releases)
+[![Python Support](https://img.shields.io/badge/python-3.10%20%7C%203.13-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/github/license/onhala/smtp2mqtt?color=green)](LICENSE)
+[![Docker Build](https://img.shields.io/badge/docker-multi--arch-blue.svg?logo=docker)](Dockerfile)
+[![Loxone / Loxberry](https://img.shields.io/badge/integration-Loxone%20%2F%20Loxberry-orange.svg)](https://www.loxone.com)
+
 A lightweight, high-performance, and fully asynchronous SMTP-to-MQTT bridge. It runs an unthreaded SMTP gateway, receives emails (e.g., motion detection trigger emails from Hikvision cameras), and publishes trigger payloads directly to an MQTT broker.
 
 This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10+ / 3.13+), resolving event loop issues and utilizing non-blocking asynchronous IO. It is specifically designed to integrate camera motion detection triggers with automation systems like **Loxberry (MQTT Gateway) and Loxone**.
-
 
 ---
 
