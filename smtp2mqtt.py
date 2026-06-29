@@ -68,10 +68,13 @@ log.addHandler(ch)
 
 # Log to file if "log" directory exists
 if os.path.exists("log"):
-    log.info("Setting up a file logger at log/smtp2mqtt.log")
-    fh = logging.FileHandler("log/smtp2mqtt.log")
-    fh.setFormatter(formatter)
-    log.addHandler(fh)
+    try:
+        log.info("Setting up a file logger at log/smtp2mqtt.log")
+        fh = logging.FileHandler("log/smtp2mqtt.log")
+        fh.setFormatter(formatter)
+        log.addHandler(fh)
+    except Exception as e:
+        log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
 class smtp2mqttHandler:
