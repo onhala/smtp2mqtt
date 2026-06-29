@@ -1,6 +1,19 @@
-FROM alpine:3.12
-WORKDIR /smtp2mqtt
-COPY smtp2mqtt.py requirements.txt ./
-RUN apk add --no-cache python3 py3-pip && pip3 install -r requirements.txt
+FROM python:3.12-slim
+
+# Set non-buffered output for real-time logs
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install dependencies first for better caching
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application script
+COPY smtp2mqtt.py ./
+
+# Expose SMTP port
 EXPOSE 1025
-CMD ["python3", "smtp2mqtt.py"]
+
+# Run the app
+CMD ["python", "smtp2mqtt.py"]
