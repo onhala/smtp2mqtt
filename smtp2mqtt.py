@@ -9,12 +9,13 @@ import socket
 import sys
 from datetime import datetime
 from email.policy import default
+from typing import Any, Dict, List, Optional, Union
 
 from aiosmtpd.controller import UnthreadedController
 from paho.mqtt import publish
 
 # Default configurations
-defaults = {
+defaults: Dict[str, Union[str, int]] = {
     "SMTP_PORT": 1025,
     "MQTT_HOST": "localhost",
     "MQTT_PORT": 1883,
@@ -31,13 +32,14 @@ defaults = {
     "WEB_PORT": "8080",
 }
 
-def parse_bool(value) -> bool:
+def parse_bool(value: Any) -> bool:
     """Helper to robustly parse boolean configuration values."""
     if isinstance(value, bool):
         return value
     if value is None:
         return False
     return str(value).lower() in ("true", "1", "yes", "on")
+
 
 # Load and process configuration
 config = {}
