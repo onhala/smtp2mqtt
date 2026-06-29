@@ -250,6 +250,41 @@ Every code push or Pull Request to the repository triggers a GitHub Actions work
 
 ---
 
+## Troubleshooting & FAQ
+
+### `PermissionError: [Errno 13] Permission denied: '/app/log/smtp2mqtt.log'`
+
+For security, the Docker container runs as a non-privileged system user (`appuser` with UID `10001`). If you are using **bind-mounts** (such as `./log:/app/log` or `./attachments:/app/attachments`), the mounted directories on the host must be writable by UID `10001`.
+
+To resolve this, you have two options depending on your deployment style:
+
+#### Option A: Fix permissions on the host (recommended for CLI / SSH)
+If you have SSH access to the host machine, navigate to your deployment folder and run:
+```bash
+sudo chown -R 10001:10001 log attachments
+```
+
+#### Option B: Use Named Volumes (recommended for Portainer & NAS)
+If you deploy via Portainer (Stacks / Compose) and don't want to manage host-level permissions, switch from bind-mounts to **Docker Named Volumes**. Docker automatically manages the directories and ensures the non-root container user has full read/write access.
+
+Update your `docker-compose.yml` as follows:
+
+```yaml
+services:
+  smtp2mqtt:
+    # ... other config ...
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - smtp2mqtt_log:/app/log
+      - smtp2mqtt_attachments:/app/attachments
+
+volumes:
+  smtp2mqtt_log:
+  smtp2mqtt_attachments:
+```
+
+---
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
