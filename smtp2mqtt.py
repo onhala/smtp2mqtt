@@ -428,25 +428,29 @@ class smtp2mqttHandler:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>smtp2mqtt Gateway Dashboard</title>
-    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #050706;
-            --card-bg: #0b0f0c;
-            --border-color: #1a261d;
-            --border-focus: #2e3d32;
-            --text-primary: #e2e8f0;
-            --text-secondary: #7fa384;
-            --text-muted: #4e6351;
-            --accent-primary: #7ec127;
-            --accent-glow: rgba(126, 193, 39, 0.15);
+            /* Refined Premium High-Contrast Loxone Palette */
+            --bg-color: #0b0f14;          /* Deep rich dark blue-black base */
+            --card-bg: #161b22;           /* Crisp secondary charcoal background */
+            --border-color: #30363d;       /* High-visibility contrast borders */
+            --border-focus: #444c56;       /* Elevated active border color */
+            --text-primary: #f0f6fc;       /* Off-white primary header for maximum readability */
+            --text-secondary: #c9d1d9;     /* Light slate-gray for perfectly readable regular text */
+            --text-muted: #8b949e;         /* Medium-gray for muted/secondary information */
+            
+            --accent-primary: #7ec127;     /* Vibrant Loxone Green */
+            --accent-glow: rgba(126, 193, 39, 0.12);
+            --accent-hover: #90d635;
+            
             --success: #7ec127;
             --success-glow: rgba(126, 193, 39, 0.15);
-            --danger: #ef4444;
-            --danger-glow: rgba(239, 68, 68, 0.15);
-            --system-color: #f59e0b;
-            --system-glow: rgba(245, 158, 11, 0.12);
+            --danger: #ff7b72;             /* High-contrast pastel red for reliable dark mode errors */
+            --danger-glow: rgba(255, 123, 114, 0.15);
+            --system-color: #f0883e;       /* Warm orange for system actions */
+            --system-glow: rgba(240, 136, 62, 0.12);
         }
         * {
             box-sizing: border-box;
@@ -456,83 +460,102 @@ class smtp2mqttHandler:
         body {
             font-family: 'Inter', sans-serif;
             background-color: var(--bg-color);
-            color: var(--text-primary);
+            color: var(--text-secondary);
             min-height: 100vh;
-            padding: 2rem 1.5rem;
+            padding: 3rem 2rem;
             display: flex;
             justify-content: center;
         }
+        /* Custom Modern Scrollbars for extreme premium feel */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--bg-color);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-focus);
+        }
+
         .container {
             width: 100%;
             max-width: 1200px;
             display: flex;
             flex-direction: column;
-            gap: 2rem;
+            gap: 2.5rem;
         }
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding-bottom: 1.5rem;
+            padding-bottom: 2rem;
             border-bottom: 1px solid var(--border-color);
         }
         .title-area h1 {
             font-family: 'Share Tech Mono', monospace;
-            font-size: 1.85rem;
+            font-size: 2.1rem;
             font-weight: 700;
             color: var(--accent-primary);
-            text-shadow: 0 0 10px rgba(126, 193, 39, 0.3);
-            margin-bottom: 0.25rem;
-            letter-spacing: -0.02em;
+            text-shadow: 0 0 15px rgba(126, 193, 39, 0.35);
+            margin-bottom: 0.35rem;
+            letter-spacing: -0.01em;
         }
         .title-area p {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            font-weight: 500;
         }
         .live-indicator {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.625rem;
             background: var(--accent-glow);
-            border: 1px solid rgba(126, 193, 39, 0.3);
+            border: 1px solid rgba(126, 193, 39, 0.4);
             color: var(--accent-primary);
-            padding: 0.375rem 0.75rem;
-            border-radius: 4px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             font-family: 'Share Tech Mono', monospace;
-            font-size: 0.75rem;
+            font-size: 0.8rem;
             font-weight: 600;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.08em;
+            box-shadow: 0 0 10px rgba(126, 193, 39, 0.1);
         }
         .live-dot {
             width: 8px;
             height: 8px;
             background-color: var(--accent-primary);
             border-radius: 50%;
-            box-shadow: 0 0 10px var(--accent-primary);
+            box-shadow: 0 0 8px var(--accent-primary);
             animation: pulse-green 2s infinite;
         }
         @keyframes pulse-green {
-            0% { box-shadow: 0 0 0 0 rgba(126, 193, 39, 0.4); }
+            0% { box-shadow: 0 0 0 0 rgba(126, 193, 39, 0.5); }
             70% { box-shadow: 0 0 0 8px rgba(126, 193, 39, 0); }
             100% { box-shadow: 0 0 0 0 rgba(126, 193, 39, 0); }
         }
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1.75rem;
         }
         .card {
             background-color: var(--card-bg);
             border: 1px solid var(--border-color);
             border-left: 4px solid var(--accent-primary);
-            border-radius: 4px;
-            padding: 1.5rem;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
-            transition: border-color 0.2s, box-shadow 0.2s;
+            border-radius: 8px;
+            padding: 1.75rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+            transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
         }
         .card:hover {
             border-color: var(--border-focus);
-            box-shadow: 0 4px 35px rgba(126, 193, 39, 0.08);
+            box-shadow: 0 6px 30px rgba(126, 193, 39, 0.1);
+            transform: translateY(-2px);
         }
         .card-header {
             display: flex;
@@ -542,11 +565,11 @@ class smtp2mqttHandler:
         }
         .card-title {
             font-family: 'Share Tech Mono', monospace;
-            font-size: 0.8125rem;
-            color: var(--text-secondary);
+            font-size: 0.875rem;
+            color: var(--text-muted);
             font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
+            letter-spacing: 0.1em;
         }
         .card-icon {
             display: flex;
@@ -554,40 +577,42 @@ class smtp2mqttHandler:
             justify-content: center;
             width: 2.25rem;
             height: 2.25rem;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 4px;
-            color: var(--text-secondary);
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 6px;
+            color: var(--text-muted);
         }
         .card-value {
             font-family: 'Share Tech Mono', monospace;
-            font-size: 1.85rem;
+            font-size: 2rem;
             font-weight: 700;
             margin-bottom: 0.5rem;
             color: var(--text-primary);
         }
         .card-subtext {
-            font-size: 0.8125rem;
+            font-size: 0.875rem;
             color: var(--text-muted);
+            font-weight: 400;
         }
         .status-badge {
             display: inline-flex;
             align-items: center;
-            gap: 0.375rem;
-            padding: 0.25rem 0.625rem;
-            border-radius: 4px;
+            gap: 0.45rem;
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
             font-family: 'Share Tech Mono', monospace;
-            font-size: 0.75rem;
+            font-size: 0.8rem;
             font-weight: 600;
+            letter-spacing: 0.02em;
         }
         .status-badge.success {
             background-color: var(--success-glow);
             color: var(--accent-primary);
-            border: 1px solid rgba(126, 193, 39, 0.25);
+            border: 1px solid rgba(126, 193, 39, 0.4);
         }
         .status-badge.danger {
             background-color: var(--danger-glow);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.25);
+            color: var(--danger);
+            border: 1px solid rgba(255, 123, 114, 0.4);
         }
         .status-badge.secondary {
             background-color: rgba(255, 255, 255, 0.03);
@@ -597,100 +622,127 @@ class smtp2mqttHandler:
         .panel {
             background-color: var(--card-bg);
             border: 1px solid var(--border-color);
-            border-radius: 4px;
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
         .panel-header {
-            padding: 1.5rem;
+            padding: 1.75rem 2rem;
             border-bottom: 1px solid var(--border-color);
+            background-color: rgba(0, 0, 0, 0.15);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
         .panel-title {
             font-family: 'Share Tech Mono', monospace;
-            font-size: 1.125rem;
+            font-size: 1.25rem;
             font-weight: 600;
             color: var(--text-primary);
             letter-spacing: 0.02em;
         }
         .table-container {
             overflow-x: auto;
-            max-height: 450px;
+            max-height: 480px;
         }
         table {
             width: 100%;
             border-collapse: collapse;
             text-align: left;
-            font-size: 0.875rem;
+            font-size: 0.95rem;
         }
         th {
-            padding: 1rem 1.5rem;
+            padding: 1.25rem 2rem;
             font-family: 'Share Tech Mono', monospace;
             font-weight: 600;
-            color: var(--text-secondary);
-            border-bottom: 1px solid var(--border-color);
-            background-color: rgba(0, 0, 0, 0.2);
+            color: var(--text-muted);
+            border-bottom: 2px solid var(--border-color);
+            background-color: rgba(11, 15, 20, 0.8);
             position: sticky;
             top: 0;
             z-index: 10;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
         td {
-            padding: 1rem 1.5rem;
+            padding: 1.25rem 2rem;
             border-bottom: 1px solid var(--border-color);
-            color: var(--text-primary);
+            color: var(--text-secondary);
+            vertical-align: middle;
         }
         tr:last-child td {
             border-bottom: none;
         }
         tr:hover td {
-            background-color: rgba(255, 255, 255, 0.01);
+            background-color: rgba(255, 255, 255, 0.015);
         }
         .type-badge {
             display: inline-flex;
-            padding: 0.1875rem 0.5rem;
-            border-radius: 2px;
+            padding: 0.25rem 0.625rem;
+            border-radius: 4px;
             font-family: 'Share Tech Mono', monospace;
-            font-size: 0.6875rem;
+            font-size: 0.75rem;
             font-weight: 700;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.08em;
         }
         .type-badge.trigger {
             background-color: var(--accent-glow);
             color: var(--accent-primary);
-            border: 1px solid rgba(126, 193, 39, 0.25);
+            border: 1px solid rgba(126, 193, 39, 0.4);
         }
         .type-badge.reset {
-            background-color: rgba(255, 255, 255, 0.03);
+            background-color: rgba(255, 255, 255, 0.04);
             color: var(--text-secondary);
             border: 1px solid var(--border-color);
         }
         .type-badge.system {
             background-color: var(--system-glow);
             color: var(--system-color);
-            border: 1px solid rgba(245, 158, 11, 0.25);
+            border: 1px solid rgba(240, 136, 62, 0.4);
         }
         .empty-state {
-            padding: 4rem 2rem;
+            padding: 5rem 2rem;
             text-align: center;
-            color: var(--text-secondary);
+            color: var(--text-muted);
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 0.75rem;
+            gap: 1rem;
+            font-size: 1rem;
         }
         .empty-state svg {
-            opacity: 0.3;
+            color: var(--text-muted);
+            opacity: 0.5;
+            margin-bottom: 0.5rem;
+        }
+        
+        /* Modern Attachment Download Capsules */
+        .attachment-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            transition: border-color 0.2s, background-color 0.2s;
+        }
+        .attachment-item:hover {
+            border-color: var(--accent-primary);
+            background: rgba(126, 193, 39, 0.04);
+        }
+        .attachment-link {
+            transition: color 0.2s;
+        }
+        .attachment-item:hover .attachment-link {
+            color: var(--accent-hover);
         }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <div class="title-area" style="display: flex; align-items: center; gap: 1rem;">
-                <img src="/logo.svg" alt="logo" style="width: 48px; height: 48px; display: block; border-radius: 8px; filter: drop-shadow(0 0 8px rgba(126, 193, 39, 0.4));" />
+            <div class="title-area" style="display: flex; align-items: center; gap: 1.25rem;">
+                <img src="/logo.svg" alt="logo" style="width: 52px; height: 52px; display: block; filter: drop-shadow(0 0 10px rgba(126, 193, 39, 0.4));" />
                 <div>
                     <h1>smtp2mqtt Gateway</h1>
                     <p>Asynchronous SMTP-to-MQTT Trigger Converter</p>
@@ -778,7 +830,7 @@ class smtp2mqttHandler:
                         <tr>
                             <td colspan="7">
                                 <div class="empty-state">
-                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22c5.523 0 9-4.477 9-10S17.523 2 12 2 3 6.477 3 12s3.477 10 9 10zM12 8v4M12 16h.01"/></svg>
+                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                                     Waiting for API data...
                                 </div>
                             </td>
@@ -821,7 +873,7 @@ class smtp2mqttHandler:
                 const mqttStatusBadge = document.getElementById('mqtt-status');
                 if (data.mqtt_connected) {
                     mqttStatusBadge.className = 'status-badge success';
-                    mqttStatusBadge.innerHTML = '<span class="live-dot" style="background-color: var(--accent-primary); box-shadow: 0 0 10px var(--accent-primary); animation: pulse-green 2s infinite; width: 6px; height: 6px; margin-right: 4px;"></span>Connected';
+                    mqttStatusBadge.innerHTML = '<span class="live-dot" style="background-color: var(--accent-primary); box-shadow: 0 0 8px var(--accent-primary); animation: pulse-green 2s infinite; width: 6px; height: 6px; margin-right: 4px;"></span>Connected';
                 } else {
                     mqttStatusBadge.className = 'status-badge danger';
                     mqttStatusBadge.innerHTML = 'Disconnected';
@@ -830,7 +882,7 @@ class smtp2mqttHandler:
                 const smtpStatusBadge = document.getElementById('smtp-status');
                 if (data.smtp_connected) {
                     smtpStatusBadge.className = 'status-badge success';
-                    smtpStatusBadge.innerHTML = '<span class="live-dot" style="background-color: var(--accent-primary); box-shadow: 0 0 10px var(--accent-primary); animation: pulse-green 2s infinite; width: 6px; height: 6px; margin-right: 4px;"></span>Active';
+                    smtpStatusBadge.innerHTML = '<span class="live-dot" style="background-color: var(--accent-primary); box-shadow: 0 0 8px var(--accent-primary); animation: pulse-green 2s infinite; width: 6px; height: 6px; margin-right: 4px;"></span>Active';
                 } else {
                     smtpStatusBadge.className = 'status-badge danger';
                     smtpStatusBadge.innerHTML = 'Inactive';
@@ -853,12 +905,12 @@ class smtp2mqttHandler:
                             attsHtml = act.attachments.map(att => {
                                 const safeName = escapeHtml(att.filename);
                                 const safePath = escapeHtml(att.path);
-                                return `<div class="attachment-item" style="margin-bottom: 0.375rem;">
-                                    <a href="/attachments/${safeName}" target="_blank" class="attachment-link" style="color: var(--accent-primary); text-decoration: none; font-weight: 600; font-family: 'Share Tech Mono', monospace; display: inline-flex; align-items: center; gap: 0.25rem;">
+                                return `<div class="attachment-item" style="margin-bottom: 0.5rem;">
+                                    <a href="/attachments/${safeName}" target="_blank" class="attachment-link" style="color: var(--accent-primary); text-decoration: none; font-weight: 600; font-family: 'Share Tech Mono', monospace; display: inline-flex; align-items: center; gap: 0.35rem;">
                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                                         ${safeName}
                                     </a>
-                                    <div class="attachment-path" style="font-size: 0.7rem; color: #5c7c59; font-family: 'Share Tech Mono', monospace; word-break: break-all; margin-top: 0.05rem;">${safePath}</div>
+                                    <div class="attachment-path" style="font-size: 0.75rem; color: #7fa384; font-family: 'Share Tech Mono', monospace; word-break: break-all; margin-top: 0.15rem;">${safePath}</div>
                                 </div>`;
                             }).join('');
                         }
@@ -869,8 +921,8 @@ class smtp2mqttHandler:
                             <td style="white-space: nowrap; font-family: 'Share Tech Mono', monospace;">${escapeHtml(act.timestamp)}</td>
                             <td><span class="${typeClass}">${escapeHtml(act.type.toUpperCase())}</span></td>
                             <td style="font-family: 'Share Tech Mono', monospace;">${escapeHtml(act.sender)}</td>
-                            <td style="font-family: 'Share Tech Mono', monospace; font-size: 0.8125rem; color: ${topicColor};">${escapeHtml(act.topic)}</td>
-                            <td><span style="font-family: 'Share Tech Mono', monospace; font-weight: 600;">${escapeHtml(act.payload)}</span></td>
+                            <td style="font-family: 'Share Tech Mono', monospace; font-size: 0.875rem; color: ${topicColor};">${escapeHtml(act.topic)}</td>
+                            <td><span style="font-family: 'Share Tech Mono', monospace; font-weight: 600; color: var(--text-primary);">${escapeHtml(act.payload)}</span></td>
                             <td>${attsHtml}</td>
                             <td><span class="${statusClass}">${escapeHtml(act.status)}</span></td>
                         </tr>`;
@@ -929,14 +981,15 @@ class smtp2mqttHandler:
             elif path == "/":
                 body = self.get_dashboard_html().encode("utf-8")
                 content_type = "text/html; charset=utf-8"
-            elif path in ("/logo.svg", "/favicon.ico"):
-                logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.svg")
-                if os.path.exists(logo_path) and os.path.isfile(logo_path):
+            elif path in ("/logo.svg", "/favicon.svg", "/favicon.ico"):
+                filename = "logo.svg" if path == "/logo.svg" else "favicon.svg"
+                file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+                if os.path.exists(file_path) and os.path.isfile(file_path):
                     content_type = "image/svg+xml"
                     try:
-                        body = await asyncio.to_thread(self._read_file_binary, logo_path)
+                        body = await asyncio.to_thread(self._read_file_binary, file_path)
                     except Exception as e:
-                        log.error("Failed to read logo file %s: %s", logo_path, e)
+                        log.error("Failed to read image file %s: %s", file_path, e)
                         body = b"Internal Server Error"
                         content_type = "text/plain"
                         response_headers = (
@@ -949,7 +1002,7 @@ class smtp2mqttHandler:
                         await writer.drain()
                         return
                 else:
-                    body = b"Logo Not Found"
+                    body = b"File Not Found"
                     content_type = "text/plain"
                     response_headers = (
                         f"HTTP/1.1 404 Not Found\r\n"

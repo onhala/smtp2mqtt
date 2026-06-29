@@ -1089,18 +1089,18 @@ async def test_handle_web_client_serves_logo(monkeypatch):
         async def wait_closed(self):
             pass
 
-    # Test 1: Logo exists
-    # Temporarily mock os.path.exists and os.path.isfile to return True for logo.svg
+    # Test 1: Files exist
+    # Temporarily mock os.path.exists and os.path.isfile to return True for logo.svg and favicon.svg
     orig_exists = os.path.exists
     orig_isfile = os.path.isfile
     
     def mock_exists(path):
-        if "logo.svg" in path:
+        if "logo.svg" in path or "favicon.svg" in path:
             return True
         return orig_exists(path)
         
     def mock_isfile(path):
-        if "logo.svg" in path:
+        if "logo.svg" in path or "favicon.svg" in path:
             return True
         return orig_isfile(path)
 
@@ -1109,13 +1109,17 @@ async def test_handle_web_client_serves_logo(monkeypatch):
 
     # Mock _read_file_binary to return mock SVG content
     dummy_svg = b"<svg>Mock Logo</svg>"
+    dummy_fav = b"<svg>Mock Favicon</svg>"
     def mock_read_file_binary(self_obj, path):
         if "logo.svg" in path:
             return dummy_svg
+        if "favicon.svg" in path:
+            return dummy_fav
         raise FileNotFoundError()
 
     monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_read_file_binary", mock_read_file_binary)
 
+    # Verify serving logo.svg
     reader = MockReader("/logo.svg")
     writer = MockWriter()
     await handler.handle_web_client(reader, writer)
@@ -1123,9 +1127,25 @@ async def test_handle_web_client_serves_logo(monkeypatch):
     assert b"Content-Type: image/svg+xml" in writer.write_data
     assert dummy_svg in writer.write_data
 
-    # Test 2: Logo does not exist
+    # Verify serving favicon.svg on /favicon.svg route
+    reader = MockReader("/favicon.svg")
+    writer = MockWriter()
+    await handler.handle_web_client(reader, writer)
+    assert b"200 OK" in writer.write_data
+    assert b"Content-Type: image/svg+xml" in writer.write_data
+    assert dummy_fav in writer.write_data
+
+    # Verify serving favicon.svg on /favicon.ico route
+    reader = MockReader("/favicon.ico")
+    writer = MockWriter()
+    await handler.handle_web_client(reader, writer)
+    assert b"200 OK" in writer.write_data
+    assert b"Content-Type: image/svg+xml" in writer.write_data
+    assert dummy_fav in writer.write_data
+
+    # Test 2: File does not exist
     def mock_exists_false(path):
-        if "logo.svg" in path:
+        if "logo.svg" in path or "favicon.svg" in path:
             return False
         return orig_exists(path)
     monkeypatch.setattr(os.path, "exists", mock_exists_false)
@@ -1134,7 +1154,7 @@ async def test_handle_web_client_serves_logo(monkeypatch):
     writer = MockWriter()
     await handler.handle_web_client(reader, writer)
     assert b"404 Not Found" in writer.write_data
-    assert b"Logo Not Found" in writer.write_data
+    assert b"File Not Found" in writer.write_data
 
     handler.cancel_all_resets()
 
@@ -1179,3 +1199,120 @@ async def test_monitor_mqtt_broker_logs_state_changes_to_actions(monkeypatch):
     assert system_actions[0]["status"] == "SUCCESS"
     assert "Offline (Unreachable)" in system_actions[1]["payload"]
     assert system_actions[1]["status"] == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_handle_data_associates_attachments_to_recent_actions(monkeypatch):
+    """Verify that handle_DATA associates saved attachments to the corresponding trigger action."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Pre-populate self.recent_actions with the expected trigger action
+    handler.recent_actions = [
+        {
+            "type": "trigger",
+            "sender": "sender@domain.com",
+            "topic": "smtp2mqtt/sender-domain.com",
+            "time": "12:00",
+            "payload": "ON"
+        }
+    ]
+    
+    envelope = mock.MagicMock()
+    envelope.mail_from = "sender@domain.com"
+    envelope.original_content = b"From: sender@domain.com\nTo: rcpt@domain.com\nSubject: Test\n\nBody"
+    envelope.content = b"From: sender@domain.com\nTo: rcpt@domain.com\nSubject: Test\n\nBody"
+    
+    mock_attachments = [{"filename": "test.jpg", "path": "attachments/test.jpg", "size": 123}]
+    
+    async def mock_to_thread(func, *args, **kwargs):
+        if func == handler.save_attachments:
+            return mock_attachments
+        return None
+        
+    monkeypatch.setattr(asyncio, "to_thread", mock_to_thread)
+    
+    res = await handler.handle_DATA(None, None, envelope)
+    assert res == "250 Message accepted for delivery"
+    
+    # Assert attachments were associated to the trigger action
+    assert handler.recent_actions[0]["attachments"] == mock_attachments
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_handle_web_client_read_file_binary_exception(monkeypatch):
+    """Verify that handle_web_client returns 500 when _read_file_binary raises an exception for logo/favicon."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    class MockReader:
+        async def readline(self):
+            return b"GET /logo.svg HTTP/1.1\r\n"
+
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+            self.is_closed = False
+        def write(self, data):
+            self.write_data += data
+        async def drain(self):
+            pass
+        def close(self):
+            self.is_closed = True
+        async def wait_closed(self):
+            pass
+
+    monkeypatch.setattr(os.path, "exists", lambda p: True)
+    monkeypatch.setattr(os.path, "isfile", lambda p: True)
+
+    def mock_read_file_binary_error(self_obj, path):
+        raise IOError("Mock read failure")
+
+    monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_read_file_binary", mock_read_file_binary_error)
+
+    reader = MockReader()
+    writer = MockWriter()
+    await handler.handle_web_client(reader, writer)
+    assert b"500 Internal Server Error" in writer.write_data
+    assert b"Internal Server Error" in writer.write_data
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_handle_web_client_attachment_read_exception(monkeypatch):
+    """Verify that handle_web_client returns 500 when _read_file_binary raises an exception for an attachment."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    class MockReader:
+        async def readline(self):
+            return b"GET /attachments/test.jpg HTTP/1.1\r\n"
+
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+            self.is_closed = False
+        def write(self, data):
+            self.write_data += data
+        async def drain(self):
+            pass
+        def close(self):
+            self.is_closed = True
+        async def wait_closed(self):
+            pass
+
+    monkeypatch.setattr(os.path, "exists", lambda p: True)
+    monkeypatch.setattr(os.path, "isfile", lambda p: True)
+
+    def mock_read_file_binary_error(self_obj, path):
+        raise IOError("Mock attachment read failure")
+
+    monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_read_file_binary", mock_read_file_binary_error)
+
+    reader = MockReader()
+    writer = MockWriter()
+    await handler.handle_web_client(reader, writer)
+    assert b"500 Internal Server Error" in writer.write_data
+    assert b"Internal Server Error" in writer.write_data
+    handler.cancel_all_resets()
