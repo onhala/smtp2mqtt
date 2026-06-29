@@ -106,7 +106,14 @@ Add the following to your `services.yaml` or `widgets.yaml`:
 The container is built on top of the official, ultra-lightweight `python:3.13-slim` image and runs inside `/app`.
 
 
-### 1. Build the Docker Image
+### 1. Pull or Build the Docker Image
+
+You can pull the official pre-built, multi-architecture image directly from the GitHub Container Registry (recommended):
+```bash
+docker pull ghcr.io/onhala/smtp2mqtt:latest
+```
+
+Alternatively, you can build the image locally from source:
 ```bash
 docker build -t smtp2mqtt .
 ```
@@ -128,7 +135,7 @@ docker run -d \
     -v /etc/localtime:/etc/localtime:ro \
     -v $PWD/log:/app/log \
     -v $PWD/attachments:/app/attachments \
-    smtp2mqtt
+    ghcr.io/onhala/smtp2mqtt:latest
 ```
 
 > [!NOTE]
