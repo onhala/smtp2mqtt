@@ -85,17 +85,15 @@ Depending on where you want to place the widget, choose one of the following con
     headers:
       Accept: application/json
     mappings:
-      - title: Messages
-        value: "{{processed_messages_count}}"
+      - field: processed_messages_count
+        label: Messages
         format: number
-      - title: Uptime
-        value: "{{uptime_formatted}}"
-      - title: SMTP
-        value: "{{smtp_status_text}}"
-        color: "{{#if (eq smtp_status_text 'Active')}}green{{else}}red{{/if}}"
-      - title: MQTT
-        value: "{{mqtt_status_text}}"
-        color: "{{#if (eq mqtt_status_text 'Connected')}}green{{else}}red{{/if}}"
+      - field: uptime_formatted
+        label: Uptime
+      - field: smtp_status_text
+        label: SMTP
+      - field: mqtt_status_text
+        label: MQTT
 ```
 
 #### Option B: In `services.yaml` (Nested under a service card)
@@ -112,17 +110,15 @@ Depending on where you want to place the widget, choose one of the following con
           headers:
             Accept: application/json
           mappings:
-            - title: Messages
-              value: "{{processed_messages_count}}"
+            - field: processed_messages_count
+              label: Messages
               format: number
-            - title: Uptime
-              value: "{{uptime_formatted}}"
-            - title: SMTP
-              value: "{{smtp_status_text}}"
-              color: "{{#if (eq smtp_status_text 'Active')}}green{{else}}red{{/if}}"
-            - title: MQTT
-              value: "{{mqtt_status_text}}"
-              color: "{{#if (eq mqtt_status_text 'Connected')}}green{{else}}red{{/if}}"
+            - field: uptime_formatted
+              label: Uptime
+            - field: smtp_status_text
+              label: SMTP
+            - field: mqtt_status_text
+              label: MQTT
 ```
 
 
