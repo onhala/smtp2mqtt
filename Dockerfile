@@ -15,8 +15,8 @@ RUN useradd -u 10001 -U -M -s /bin/false appuser && \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application script and healthcheck
-COPY smtp2mqtt.py healthcheck.py ./
+# Copy application script, healthcheck, and static assets
+COPY smtp2mqtt.py healthcheck.py logo.svg favicon.svg ./
 RUN chown -R appuser:appuser /app
 
 # Switch to non-privileged user
