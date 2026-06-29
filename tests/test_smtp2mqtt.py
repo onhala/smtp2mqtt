@@ -1058,6 +1058,88 @@ async def test_handle_web_client_attachment_not_found():
 
 
 @pytest.mark.asyncio
+async def test_handle_web_client_serves_logo(monkeypatch):
+    """Verify that handle_web_client serves logo.svg with correct MIME type and handles missing file."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    class MockReader:
+        def __init__(self, path):
+            self.path = path
+        async def readline(self):
+            if not hasattr(self, "called"):
+                self.called = True
+                return f"GET {self.path} HTTP/1.1\r\n".encode()
+            return b"\r\n"
+
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+            self.is_closed = False
+
+        def write(self, data):
+            self.write_data += data
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.is_closed = True
+
+        async def wait_closed(self):
+            pass
+
+    # Test 1: Logo exists
+    # Temporarily mock os.path.exists and os.path.isfile to return True for logo.svg
+    orig_exists = os.path.exists
+    orig_isfile = os.path.isfile
+    
+    def mock_exists(path):
+        if "logo.svg" in path:
+            return True
+        return orig_exists(path)
+        
+    def mock_isfile(path):
+        if "logo.svg" in path:
+            return True
+        return orig_isfile(path)
+
+    monkeypatch.setattr(os.path, "exists", mock_exists)
+    monkeypatch.setattr(os.path, "isfile", mock_isfile)
+
+    # Mock _read_file_binary to return mock SVG content
+    dummy_svg = b"<svg>Mock Logo</svg>"
+    def mock_read_file_binary(self_obj, path):
+        if "logo.svg" in path:
+            return dummy_svg
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_read_file_binary", mock_read_file_binary)
+
+    reader = MockReader("/logo.svg")
+    writer = MockWriter()
+    await handler.handle_web_client(reader, writer)
+    assert b"200 OK" in writer.write_data
+    assert b"Content-Type: image/svg+xml" in writer.write_data
+    assert dummy_svg in writer.write_data
+
+    # Test 2: Logo does not exist
+    def mock_exists_false(path):
+        if "logo.svg" in path:
+            return False
+        return orig_exists(path)
+    monkeypatch.setattr(os.path, "exists", mock_exists_false)
+
+    reader = MockReader("/logo.svg")
+    writer = MockWriter()
+    await handler.handle_web_client(reader, writer)
+    assert b"404 Not Found" in writer.write_data
+    assert b"Logo Not Found" in writer.write_data
+
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
 async def test_monitor_mqtt_broker_logs_state_changes_to_actions(monkeypatch):
     """Verify that MQTT broker monitor logs state changes (system actions) correctly on transition."""
     loop = asyncio.get_running_loop()

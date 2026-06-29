@@ -1,5 +1,9 @@
 # smtp2mqtt
 
+<p align="center">
+  <img src="logo.svg" alt="smtp2mqtt Logo" width="200" />
+</p>
+
 [![Python CI](https://github.com/onhala/smtp2mqtt/actions/workflows/test.yml/badge.svg)](https://github.com/onhala/smtp2mqtt/actions/workflows/test.yml)
 [![Latest Release](https://img.shields.io/github/v/release/onhala/smtp2mqtt?color=blue)](https://github.com/onhala/smtp2mqtt/releases)
 [![Python Support](https://img.shields.io/badge/python-3.10%20%7C%203.13-blue.svg)](https://www.python.org/)

@@ -428,6 +428,7 @@ class smtp2mqttHandler:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>smtp2mqtt Gateway Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -688,9 +689,12 @@ class smtp2mqttHandler:
 <body>
     <div class="container">
         <header>
-            <div class="title-area">
-                <h1>smtp2mqtt Gateway</h1>
-                <p>Asynchronous SMTP-to-MQTT Trigger Converter</p>
+            <div class="title-area" style="display: flex; align-items: center; gap: 1rem;">
+                <img src="/logo.svg" alt="logo" style="width: 48px; height: 48px; display: block; border-radius: 8px; filter: drop-shadow(0 0 8px rgba(126, 193, 39, 0.4));" />
+                <div>
+                    <h1>smtp2mqtt Gateway</h1>
+                    <p>Asynchronous SMTP-to-MQTT Trigger Converter</p>
+                </div>
             </div>
             <div class="live-indicator">
                 <div class="live-dot"></div>
@@ -925,6 +929,37 @@ class smtp2mqttHandler:
             elif path == "/":
                 body = self.get_dashboard_html().encode("utf-8")
                 content_type = "text/html; charset=utf-8"
+            elif path in ("/logo.svg", "/favicon.ico"):
+                logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.svg")
+                if os.path.exists(logo_path) and os.path.isfile(logo_path):
+                    content_type = "image/svg+xml"
+                    try:
+                        body = await asyncio.to_thread(self._read_file_binary, logo_path)
+                    except Exception as e:
+                        log.error("Failed to read logo file %s: %s", logo_path, e)
+                        body = b"Internal Server Error"
+                        content_type = "text/plain"
+                        response_headers = (
+                            f"HTTP/1.1 500 Internal Server Error\r\n"
+                            f"Content-Type: {content_type}\r\n"
+                            f"Content-Length: {len(body)}\r\n"
+                            "Connection: close\r\n\r\n"
+                        )
+                        writer.write(response_headers.encode() + body)
+                        await writer.drain()
+                        return
+                else:
+                    body = b"Logo Not Found"
+                    content_type = "text/plain"
+                    response_headers = (
+                        f"HTTP/1.1 404 Not Found\r\n"
+                        f"Content-Type: {content_type}\r\n"
+                        f"Content-Length: {len(body)}\r\n"
+                        "Connection: close\r\n\r\n"
+                    )
+                    writer.write(response_headers.encode() + body)
+                    await writer.drain()
+                    return
             elif path.startswith("/attachments/"):
                 # Safety check against Path Traversal (CWE-22) by extracting only the base filename
                 filename = os.path.basename(path)
