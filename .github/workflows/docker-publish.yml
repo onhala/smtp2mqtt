@@ -96,3 +96,10 @@ jobs:
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
         run: echo "${{ steps.meta.outputs.tags }}" | xargs -I {} cosign sign {}@${{ steps.build-and-push.outputs.digest }}
+
+      - name: Trigger Portainer Webhook Redeploy
+        if: ${{ github.event_name != 'pull_request' && secrets.PORTAINER_WEBHOOK_URL != '' }}
+        run: |
+          echo "Triggering Portainer Webhook..."
+          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}"
+

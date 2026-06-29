@@ -140,6 +140,22 @@ The Docker container now includes a built-in `HEALTHCHECK` directive that runs a
 
 The healthcheck connects to the SMTP port, validates that the SMTP server is active, and verifies that it is returning a healthy SMTP banner (`220`). If the container ever freezes, Docker will automatically flag it as `unhealthy`. When run with `--restart always`, Docker will automatically reboot the container to restore your smart home automation flows instantly.
 
+### 4. Automatic Redeployment via Portainer Webhook
+
+If you deploy `smtp2mqtt` inside Portainer and want the container to automatically pull the new image and redeploy itself whenever a new version is pushed to GHCR (or your custom registry), you can configure a Portainer Webhook:
+
+1. **Enable Webhook in Portainer**: 
+   - Go to your Portainer Dashboard, open your `smtp2mqtt` container (or service/stack) settings.
+   - Scroll down to **Webhooks** and toggle **Create a container webhook** (or service webhook) to **On**.
+   - Copy the generated Webhook URL (it looks like `http://<portainer-ip>:9000/api/webhooks/secure/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`).
+
+2. **Configure GitHub Secret**:
+   - In your GitHub repository, navigate to **Settings** > **Secrets and variables** > **Actions**.
+   - Click **New repository secret**.
+   - Name the secret **`PORTAINER_WEBHOOK_URL`** and paste the copied Portainer Webhook URL as its value.
+
+Once configured, the GitHub Actions workflow (`docker-publish.yml`) will automatically trigger the webhook via a secure POST request upon every successful multi-arch build. Portainer will immediately download the updated image and restart the container with zero downtime or manual intervention needed.
+
 ---
 
 ## Maintenance & Housekeeping
