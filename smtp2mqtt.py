@@ -91,8 +91,15 @@ class smtp2mqttHandler:
             log.exception("Failed to parse incoming email content")
             return "500 Error parsing message"
 
-        # Construct topic based on sender
-        topic = f"{config['MQTT_TOPIC']}/{mail_from.replace('@', '-')}"
+        # Construct topic based on sender, sanitizing dangerous MQTT wildcard characters
+        sanitized_sender = (
+            mail_from.replace("@", "-")
+            .replace("/", "_")
+            .replace("+", "_")
+            .replace("#", "_")
+        )
+        topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
+
 
         # Publish the primary payload asynchronously (in a thread executor to not block loop)
         log.debug("Dispatching MQTT publish for trigger payload...")
@@ -147,11 +154,17 @@ class smtp2mqttHandler:
                     log.debug("Attachment has no filename, skipping")
                     continue
 
+                # Prevent Path Traversal (CWE-22) by extracting only the base filename
+                safe_filename = os.path.basename(filename)
+                if not safe_filename:
+                    log.debug("Sanitized attachment filename is empty, skipping")
+                    continue
+
                 image_data = part.get_content()
                 os.makedirs("attachments", exist_ok=True)
-                file_path = os.path.join("attachments", filename)
+                file_path = os.path.join("attachments", safe_filename)
                 
-                log.info("Saving attached image '%s' to '%s'", filename, file_path)
+                log.info("Saving attached image '%s' to '%s'", safe_filename, file_path)
                 with open(file_path, "wb") as f:
                     f.write(image_data)
         except Exception:

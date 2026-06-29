@@ -148,6 +148,68 @@ def test_smtp2mqtt_handler_save_attachments_exception():
     handler.save_attachments(msg, "smtp2mqtt/sender-domain.com", is_triggered=False)
 
 @pytest.mark.asyncio
+async def test_smtp2mqtt_handler_prevents_path_traversal():
+    """Verify that attachment filenames containing directory traversal characters are sanitized to prevent CWE-22."""
+    if os.path.exists("attachments"):
+        shutil.rmtree("attachments")
+
+    smtp2mqtt.config["SAVE_ATTACHMENTS"] = True
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    msg = EmailMessage()
+    msg["Subject"] = "Test trigger"
+    msg["From"] = "camera@house.com"
+    msg["To"] = "me@house.com"
+    msg.set_content("Motion detected!")
+    
+    fake_image = b"MALICIOUS-DATA"
+    # Malicious filename with traversal path
+    msg.add_attachment(fake_image, maintype="image", subtype="jpeg", filename="../../malicious_traversal.jpg")
+
+    handler.save_attachments(msg, "smtp2mqtt/camera-house.com", is_triggered=False)
+
+    # Verify attachments directory exists
+    assert os.path.exists("attachments")
+    
+    # Verify the file was saved using only the base name and did NOT traverse out of attachments
+    forbidden_path = os.path.abspath(os.path.join("attachments", "..", "malicious_traversal.jpg"))
+    safe_path = os.path.abspath(os.path.join("attachments", "malicious_traversal.jpg"))
+    
+    assert not os.path.exists(forbidden_path)
+    assert os.path.exists(safe_path)
+    
+    with open(safe_path, "rb") as f:
+        assert f.read() == fake_image
+
+    # Cleanup
+    shutil.rmtree("attachments")
+
+@pytest.mark.asyncio
+async def test_smtp2mqtt_handler_sanitizes_mqtt_topic():
+    """Verify that handles/senders with MQTT wildcards or directory separators are sanitized correctly in handle_DATA."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    envelope = mock.MagicMock()
+    envelope.mail_from = "attacker+test/#/bypass@domain.com"
+    envelope.original_content = b"From: attacker+test/#/bypass@domain.com\nTo: rcpt@domain.com\nSubject: Test\n\nBody"
+    envelope.content = b"From: attacker+test/#/bypass@domain.com\nTo: rcpt@domain.com\nSubject: Test\n\nBody"
+    
+    with mock.patch.object(handler, "mqtt_publish") as mock_pub, \
+         mock.patch.object(handler, "save_attachments") as mock_save:
+        
+        res = await handler.handle_DATA(None, None, envelope)
+        
+        assert res == "250 Message accepted for delivery"
+        # The '@' becomes '-', '+' and '#' and '/' should become '_'
+        expected_topic = "smtp2mqtt/attacker_test___bypass-domain.com"
+        mock_pub.assert_called_once_with(expected_topic, "ON")
+        assert expected_topic in handler.handles
+        
+        handler.cancel_all_resets()
+
+@pytest.mark.asyncio
 async def test_smtp2mqtt_handler_handle_data_basic():
     """Verify that handle_DATA handles valid messages, publishes to MQTT, and schedules a reset timer."""
     loop = asyncio.get_running_loop()

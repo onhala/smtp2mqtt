@@ -6,12 +6,21 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+# Create a non-privileged system user first and set up directories
+RUN useradd -u 10001 -U -M -s /bin/false appuser && \
+    mkdir -p log attachments && \
+    chown -R appuser:appuser /app
+
 # Install dependencies first for better caching
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application script and healthcheck
 COPY smtp2mqtt.py healthcheck.py ./
+RUN chown -R appuser:appuser /app
+
+# Switch to non-privileged user
+USER appuser
 
 # Expose SMTP port
 EXPOSE 1025
@@ -22,3 +31,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run the app
 CMD ["python", "smtp2mqtt.py"]
+
