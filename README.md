@@ -28,7 +28,7 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 
 ---
 
-## How It Works
+## ⚙️ How It Works & Configuration
 
 1. The gateway listens on a configured SMTP port (default: `1025`).
 2. When an email is received from `camera1@home.com`, it parses the sender and converts it to an MQTT topic:  
@@ -39,7 +39,7 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 
 ---
 
-## Configuration (Environment Variables)
+### Configuration (Environment Variables)
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
@@ -60,7 +60,7 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 
 ---
 
-## Web Status Dashboard & JSON API
+## 📊 Web Dashboard & Integrations
 
 The gateway features a built-in, lightweight async HTTP server. When `ENABLE_WEB=True` (enabled by default), you can access:
 - **Status Dashboard (`http://localhost:8080/`)**: A premium dark-mode dashboard showing uptime, message count, connection statuses for the MQTT broker and SMTP monitor, and a real-time log of recent email triggers and publish actions.
@@ -68,7 +68,7 @@ The gateway features a built-in, lightweight async HTTP server. When `ENABLE_WEB
 
 ---
 
-## Homepage Integration (gethomepage.dev)
+### Homepage Integration (gethomepage.dev)
 
 You can easily integrate `smtp2mqtt` with your Homepage dashboard using the pre-configured [homepage_widget.yaml](homepage_widget.yaml) configuration. It utilizes Homepage's `customapi` widget to map dynamic stats from the `/api` status endpoint.
 
@@ -101,7 +101,7 @@ Add the following to your `services.yaml` or `widgets.yaml`:
 
 ---
 
-## Running with Docker
+## 🐋 Docker & Portainer Deployment
 
 The container is built on top of the official, ultra-lightweight `python:3.13-slim` image and runs inside `/app`.
 
@@ -176,7 +176,7 @@ Please refer to the [deploy/README.md](deploy/README.md) for step-by-step config
 ---
 
 
-## Maintenance & Housekeeping
+### Maintenance & Housekeeping
 
 If you are saving attachments, you can set up a simple cron job to clean up older snapshots periodically:
 
@@ -187,7 +187,7 @@ docker exec smtp2mqtt find attachments -type f -ctime +20 -delete
 
 ---
 
-## Development & Testing
+## 🛠️ Local Development & Testing
 
 This project contains a comprehensive automated test suite to ensure robustness, compatibility, and prevent regressions.
 
@@ -252,7 +252,7 @@ Every code push or Pull Request to the repository triggers a GitHub Actions work
 
 ---
 
-## Troubleshooting & FAQ
+## ❓ Troubleshooting & FAQ
 
 ### `PermissionError: [Errno 13] Permission denied: '/app/log/smtp2mqtt.log'`
 
