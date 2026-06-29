@@ -79,8 +79,10 @@ jobs:
 
 
       - name: Trigger Portainer Webhook Redeploy
-        if: github.event_name != 'pull_request' && secrets.PORTAINER_WEBHOOK_URL != ''
+        if: github.event_name != 'pull_request' && env.PORTAINER_WEBHOOK_URL != ''
+        env:
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
         run: |
           echo "Triggering Portainer Webhook..."
-          curl -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}"
+          curl -X POST "$PORTAINER_WEBHOOK_URL"
 
