@@ -11,7 +11,7 @@ Only the latest release (the `master`/`main` branch) is actively supported with 
 
 ## Reporting a Vulnerability
 
-Please do not open a public GitHub issue to report a security vulnerability. Instead, send an email to **ondrej.hala@roboton.com** with details about the potential issue. 
+Please do not open a public GitHub issue to report a security vulnerability. Instead, send an email to **starter.zlobri-2c@icloud.com** with details about the potential issue.  
 
 We will investigate your report and aim to respond within 48 hours to coordinate a security release.
 
