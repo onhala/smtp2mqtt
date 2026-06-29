@@ -133,13 +133,15 @@ docker run -d \
     -e "SAVE_ATTACHMENTS=True" \
     -e "DEBUG=False" \
     -v /etc/localtime:/etc/localtime:ro \
-    -v $PWD/log:/app/log \
-    -v $PWD/attachments:/app/attachments \
+    -v smtp2mqtt_log:/app/log \
+    -v smtp2mqtt_attachments:/app/attachments \
     ghcr.io/onhala/smtp2mqtt:latest
 ```
 
-> [!NOTE]
-> Ensure your volume directories are mapped to `/app/log` and `/app/attachments` inside the container to match the unified workspace of the modern image.
+> [!TIP]
+> We use **Docker Named Volumes** (`smtp2mqtt_log` and `smtp2mqtt_attachments`) by default because Docker manages them automatically and ensures correct write permissions for the container's non-root user.
+>
+> If you prefer to use local host directories (**bind-mounts**) like `-v $PWD/log:/app/log`, you must ensure the host folders are writable by the container's system user (`UID 10001`) by running `sudo chown -R 10001:10001 log attachments` on the host machine.
 
 ### 3. Docker Healthcheck
 
