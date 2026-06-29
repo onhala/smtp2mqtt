@@ -41,7 +41,8 @@ jobs:
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
         if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v3.5.0
+        uses: sigstore/cosign-installer@v3.8.2
+
 
       # Set up QEMU for multi-architecture builds (crucial for building arm/v7 and arm64 on x86 CI runners)
       - name: Set up QEMU
