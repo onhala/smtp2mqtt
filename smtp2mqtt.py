@@ -42,7 +42,7 @@ def parse_bool(value: Any) -> bool:
 
 
 # Load and process configuration
-config = {}
+config: Dict[str, Any] = {}
 for setting, default_val in defaults.items():
     env_val = os.environ.get(setting, default_val)
     if setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB"):
@@ -75,20 +75,20 @@ if os.path.exists("log"):
 
 
 class smtp2mqttHandler:
-    def __init__(self, loop: asyncio.AbstractEventLoop):
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
-        self.reset_time = config["MQTT_RESET_TIME"]
-        self.handles = {}
+        self.reset_time: int = config["MQTT_RESET_TIME"]
+        self.handles: Dict[str, asyncio.TimerHandle] = {}
         
         # State tracking for Web Status Dashboard and gethomepage.dev
         self.start_time = datetime.now()
         self.processed_messages_count = 0
-        self.last_publish_success = None
-        self.last_publish_time = None
-        self.recent_actions = []  # List of dicts
+        self.last_publish_success: Optional[bool] = None
+        self.last_publish_time: Optional[str] = None
+        self.recent_actions: List[Dict[str, Any]] = []  # List of dicts
         
         # MQTT Broker connection monitoring
-        self.mqtt_connected_status = None
+        self.mqtt_connected_status: Optional[bool] = None
         coro = self.monitor_mqtt_broker()
         if type(loop).__name__ in ("MagicMock", "Mock", "AsyncMock"):
             self.monitor_task = None
@@ -97,7 +97,7 @@ class smtp2mqttHandler:
             self.monitor_task = self.loop.create_task(coro)
             
         # SMTP Server connectivity monitoring
-        self.smtp_connected_status_val = None
+        self.smtp_connected_status_val: Optional[bool] = None
         coro_smtp = self.monitor_smtp_server()
         if type(loop).__name__ in ("MagicMock", "Mock", "AsyncMock"):
             self.monitor_smtp_task = None
@@ -108,7 +108,7 @@ class smtp2mqttHandler:
         if config["SAVE_ATTACHMENTS"]:
             log.info("Configured to save attachments to 'attachments' directory")
 
-    def log_action(self, action_type: str, sender: str, topic: str, payload: str, success: bool):
+    def log_action(self, action_type: str, sender: str, topic: str, payload: str, success: bool) -> None:
         """Helper to thread-safely record an action status update."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.last_publish_success = success
@@ -131,7 +131,7 @@ class smtp2mqttHandler:
         if len(self.recent_actions) > 20:
             self.recent_actions.pop()
 
-    async def handle_DATA(self, server, session, envelope):
+    async def handle_DATA(self, server: Any, session: Any, envelope: Any) -> str:
         """Processes incoming SMTP email messages."""
         mail_from = envelope.mail_from
         log.info("Received SMTP message from %s", mail_from)
@@ -196,7 +196,7 @@ class smtp2mqttHandler:
 
         return "250 Message accepted for delivery"
 
-    def save_attachments(self, msg, topic: str, is_triggered: bool) -> list:
+    def save_attachments(self, msg: Any, topic: str, is_triggered: bool) -> List[Dict[str, Any]]:
         """Iterates through and saves image attachments to the local filesystem.
         
         Returns:
@@ -246,7 +246,7 @@ class smtp2mqttHandler:
             log.exception("Exception occurred while saving attachments")
         return saved_files
 
-    def mqtt_publish(self, topic: str, payload: str, action_type: str = "trigger", sender: str = "system"):
+    def mqtt_publish(self, topic: str, payload: str, action_type: str = "trigger", sender: str = "system") -> None:
         """Publishes a payload to MQTT broker (synchronous blocking network call)."""
         log.info("Publishing payload '%s' to topic '%s'", payload, topic)
         success = False
@@ -271,7 +271,7 @@ class smtp2mqttHandler:
         finally:
             self.log_action(action_type, sender, topic, payload, success)
 
-    def _trigger_reset(self, topic: str):
+    def _trigger_reset(self, topic: str) -> None:
         """Callback scheduled by call_later. Triggers topic reset back to default payload."""
         if topic in self.handles:
             self.handles.pop(topic)
@@ -282,7 +282,7 @@ class smtp2mqttHandler:
             asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_RESET_PAYLOAD"], "reset", "system")
         )
 
-    def cancel_all_resets(self):
+    def cancel_all_resets(self) -> None:
         """Cancels all currently pending reset timers and background tasks (used for graceful shutdown)."""
         if hasattr(self, "monitor_task") and self.monitor_task and not self.monitor_task.done():
             self.monitor_task.cancel()
@@ -295,7 +295,7 @@ class smtp2mqttHandler:
             handle.cancel()
         self.handles.clear()
 
-    async def monitor_mqtt_broker(self):
+    async def monitor_mqtt_broker(self) -> None:
         """Periodically checks connection to the MQTT broker and logs status changes."""
         host = config["MQTT_HOST"]
         port = config["MQTT_PORT"]
@@ -336,7 +336,7 @@ class smtp2mqttHandler:
         except Exception:
             return False
 
-    async def monitor_smtp_server(self):
+    async def monitor_smtp_server(self) -> None:
         """Periodically checks the SMTP server status and logs status changes."""
         port = config["SMTP_PORT"]
         log.info("Starting SMTP server connectivity monitor on port %d", port)
@@ -384,7 +384,7 @@ class smtp2mqttHandler:
         """Checks if the local SMTP server is active and serving."""
         return self.smtp_connected_status_val if self.smtp_connected_status_val is not None else False
 
-    def get_status_json(self) -> dict:
+    def get_status_json(self) -> Dict[str, Any]:
         """Generates dynamic JSON status data for gethomepage.dev and other dashboard widgets."""
         uptime = int((datetime.now() - self.start_time).total_seconds())
         
@@ -942,7 +942,7 @@ class smtp2mqttHandler:
 </body>
 </html>"""
 
-    async def handle_web_client(self, reader, writer):
+    async def handle_web_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Asynchronously parses incoming GET requests and serves JSON status or premium HTML dashboard."""
         try:
             data = await reader.readline()
