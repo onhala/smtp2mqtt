@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  smtp2mqtt:
+    image: ghcr.io/onhala/smtp2mqtt:latest
+    container_name: smtp2mqtt
+    restart: always
+    ports:
+      - "1025:1025" # SMTP port for cameras on the local network
+    environment:
+      - SMTP_PORT=1025
+      - MQTT_HOST=192.168.1.50 # Update with your MQTT broker IP (e.g. Loxberry)
+      - MQTT_PORT=1883
+      - SAVE_ATTACHMENTS=True
+      - ENABLE_WEB=True
+      - WEB_PORT=8080
+      - DEBUG=False
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./log:/app/log
+      - ./attachments:/app/attachments
+    networks:
+      - proxy-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: smtp2mqtt-proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN_NAME=smtp.yourdomain.com # Update with your domain name
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - proxy-net
+    depends_on:
+      - smtp2mqtt
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  proxy-net:
+    driver: bridge

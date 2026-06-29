@@ -156,7 +156,16 @@ If you deploy `smtp2mqtt` inside Portainer and want the container to automatical
 
 Once configured, the GitHub Actions workflow (`docker-publish.yml`) will automatically trigger the webhook via a secure POST request upon every successful multi-arch build. Portainer will immediately download the updated image and restart the container with zero downtime or manual intervention needed.
 
+### 5. Secure HTTPS Deployment (Caddy / Portainer Stack)
+
+If you are running `smtp2mqtt` in a production-like environment (e.g., inside Portainer or exposed to external networks) and want to secure your web status dashboard and JSON API via HTTPS, it is highly recommended to run it behind a **Reverse Proxy**.
+
+We have provided a fully configured deployment template using **Caddy** in the [deploy](deploy/) directory. Caddy automatically provisions and renews SSL/TLS certificates (via Let's Encrypt / ZeroSSL) while keeping your `smtp2mqtt` application lightweight and robust.
+
+Please refer to the [deploy/README.md](deploy/README.md) for step-by-step configuration and Docker Compose template details.
+
 ---
+
 
 ## Maintenance & Housekeeping
 
