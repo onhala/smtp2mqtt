@@ -12,7 +12,7 @@ from email.policy import default
 from typing import Any, Dict, List, Optional, Union
 
 from aiosmtpd.controller import UnthreadedController
-from paho.mqtt import publish
+from paho.mqtt import client as mqtt, publish
 
 # Default configurations
 defaults: Dict[str, Union[str, int]] = {
@@ -92,6 +92,24 @@ class smtp2mqttHandler:
         
         # MQTT Broker connection monitoring
         self.mqtt_connected_status: Optional[bool] = None
+        
+        # Initialize persistent MQTT client
+        if type(loop).__name__ in ("MagicMock", "Mock", "AsyncMock") or "pytest" in sys.modules:
+            self._mqtt_client = None
+        else:
+            self._mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            if config["MQTT_USERNAME"]:
+                self._mqtt_client.username_pw_set(config["MQTT_USERNAME"], config["MQTT_PASSWORD"])
+            self._mqtt_client.on_connect = self._on_mqtt_connect
+            self._mqtt_client.on_disconnect = self._on_mqtt_disconnect
+            
+            # Start background thread loop and initiate asynchronous connection
+            self._mqtt_client.loop_start()
+            try:
+                self._mqtt_client.connect_async(config["MQTT_HOST"], config["MQTT_PORT"], keepalive=60)
+            except Exception as e:
+                log.error("Failed to connect_async to MQTT broker: %s", e)
+
         coro = self.monitor_mqtt_broker()
         if type(loop).__name__ in ("MagicMock", "Mock", "AsyncMock"):
             self.monitor_task = None
@@ -133,6 +151,18 @@ class smtp2mqttHandler:
         self.recent_actions.insert(0, action)
         if len(self.recent_actions) > 20:
             self.recent_actions.pop()
+
+    def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any = None) -> None:
+        if rc == 0:
+            log.info("Persistent MQTT client connected successfully.")
+            self.mqtt_connected_status = True
+        else:
+            log.error("Persistent MQTT client failed to connect: return code %s", rc)
+            self.mqtt_connected_status = False
+
+    def _on_mqtt_disconnect(self, client: Any, userdata: Any, disconnect_flags: Any, rc: int, properties: Any = None) -> None:
+        log.warning("Persistent MQTT client disconnected: return code %s", rc)
+        self.mqtt_connected_status = False
 
     async def handle_DATA(self, server: Any, session: Any, envelope: Any) -> str:
         """Processes incoming SMTP email messages."""
@@ -254,21 +284,28 @@ class smtp2mqttHandler:
         log.info("Publishing payload '%s' to topic '%s'", payload, topic)
         success = False
         try:
-            auth_dict = None
-            if config["MQTT_USERNAME"]:
-                auth_dict = {
-                    "username": config["MQTT_USERNAME"],
-                    "password": config["MQTT_PASSWORD"],
-                }
+            if hasattr(self, "_mqtt_client") and self._mqtt_client is not None:
+                # Send instantly and asynchronously via the persistent background client connection
+                info = self._mqtt_client.publish(topic, payload, qos=0)
+                info.wait_for_publish(timeout=2.0)
+                success = info.is_published()
+            else:
+                # Fallback to single publish if persistent client is not active (e.g. mock testing)
+                auth_dict = None
+                if config["MQTT_USERNAME"]:
+                    auth_dict = {
+                        "username": config["MQTT_USERNAME"],
+                        "password": config["MQTT_PASSWORD"],
+                    }
 
-            publish.single(
-                topic,
-                payload,
-                hostname=config["MQTT_HOST"],
-                port=config["MQTT_PORT"],
-                auth=auth_dict,
-            )
-            success = True
+                publish.single(
+                    topic,
+                    payload,
+                    hostname=config["MQTT_HOST"],
+                    port=config["MQTT_PORT"],
+                    auth=auth_dict,
+                )
+                success = True
         except Exception as e:
             log.error("Failed to publish MQTT message to %s: %s", topic, e, exc_info=True)
         finally:
@@ -291,6 +328,16 @@ class smtp2mqttHandler:
             self.monitor_task.cancel()
         if hasattr(self, "monitor_smtp_task") and self.monitor_smtp_task and not self.monitor_smtp_task.done():
             self.monitor_smtp_task.cancel()
+        
+        # Stop and disconnect persistent MQTT client
+        if hasattr(self, "_mqtt_client") and self._mqtt_client is not None:
+            log.info("Stopping persistent MQTT client loop...")
+            try:
+                self._mqtt_client.loop_stop()
+                self._mqtt_client.disconnect()
+            except Exception as e:
+                log.error("Error stopping persistent MQTT client: %s", e)
+
         if not self.handles:
             return
         log.info("Cancelling %d active reset timers...", len(self.handles))

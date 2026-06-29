@@ -353,6 +353,25 @@ def test_mqtt_publish_exception():
         # Should not raise exception
         handler.mqtt_publish("test-topic", "ON")
 
+def test_mqtt_publish_persistent():
+    """Verify that handler correctly publishes to MQTT broker via persistent client."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Manually configure a mock persistent client
+    mock_client = mock.MagicMock()
+    mock_info = mock.MagicMock()
+    mock_info.is_published.return_value = True
+    mock_client.publish.return_value = mock_info
+    
+    handler._mqtt_client = mock_client
+    
+    handler.mqtt_publish("test-topic", "ON")
+    
+    mock_client.publish.assert_called_once_with("test-topic", "ON", qos=0)
+    mock_info.wait_for_publish.assert_called_once_with(timeout=2.0)
+    assert handler.last_publish_success is True
+
 @pytest.mark.asyncio
 async def test_smtp2mqtt_handler_trigger_reset():
     """Verify that _trigger_reset pops the handle and spawns async task for MQTT publish reset."""
