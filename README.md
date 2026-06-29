@@ -70,11 +70,11 @@ The gateway features a built-in, lightweight async HTTP server. When `ENABLE_WEB
 
 ### Homepage Integration (gethomepage.dev)
 
-You can easily integrate `smtp2mqtt` with your Homepage dashboard using the pre-configured [homepage_widget.yaml](homepage_widget.yaml) configuration. It utilizes Homepage's `customapi` widget to map dynamic stats from the `/api` status endpoint.
+You can easily integrate `smtp2mqtt` with your Homepage dashboard using the pre-configured [homepage_widget.yaml](homepage_widget.yaml) configuration. It utilizes Homepage's `customapi` widget to map dynamic stats from the `/api/status` endpoint.
 
-### Example Widget Configuration
+Depending on where you want to place the widget, choose one of the following configurations:
 
-Add the following to your `services.yaml` or `widgets.yaml`:
+#### Option A: In `widgets.yaml` (As a standalone widget)
 
 ```yaml
 - customapi:
@@ -96,6 +96,33 @@ Add the following to your `services.yaml` or `widgets.yaml`:
       - title: MQTT
         value: "{{mqtt_status_text}}"
         color: "{{#if (eq mqtt_status_text 'Connected')}}green{{else}}red{{/if}}"
+```
+
+#### Option B: In `services.yaml` (Nested under a service card)
+
+```yaml
+- Smart Home Infrastructure:
+    - smtp2mqtt Gateway:
+        icon: mdi-email-sync-outline
+        href: http://<smtp2mqtt-ip>:8080
+        widget:
+          type: customapi
+          url: http://<smtp2mqtt-ip>:8080/api/status
+          method: GET
+          headers:
+            Accept: application/json
+          mappings:
+            - title: Messages
+              value: "{{processed_messages_count}}"
+              format: number
+            - title: Uptime
+              value: "{{uptime_formatted}}"
+            - title: SMTP
+              value: "{{smtp_status_text}}"
+              color: "{{#if (eq smtp_status_text 'Active')}}green{{else}}red{{/if}}"
+            - title: MQTT
+              value: "{{mqtt_status_text}}"
+              color: "{{#if (eq mqtt_status_text 'Connected')}}green{{else}}red{{/if}}"
 ```
 
 
