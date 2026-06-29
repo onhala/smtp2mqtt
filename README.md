@@ -44,7 +44,50 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 | `MQTT_RESET_PAYLOAD` | Payload published when the reset timer expires | `OFF` |
 | `SAVE_ATTACHMENTS` | Whether to extract and save attached image snapshots | `False` |
 | `SAVE_ATTACHMENTS_DURING_RESET_TIME` | Save images from emails arriving while reset timer is active | `False` |
+| `ENABLE_WEB` | Enable the built-in zero-dependency HTTP server for stats/dashboard | `True` |
+| `WEB_PORT` | Port the built-in HTTP server listens on | `8080` |
 | `DEBUG` | Enable verbose debug logging | `False` |
+
+---
+
+## Web Status Dashboard & JSON API
+
+The gateway features a built-in, lightweight async HTTP server. When `ENABLE_WEB=True` (enabled by default), you can access:
+- **Status Dashboard (`http://localhost:8080/`)**: A premium dark-mode dashboard showing uptime, message count, connection statuses for the MQTT broker and SMTP monitor, and a real-time log of recent email triggers and publish actions.
+- **JSON Status API (`http://localhost:8080/api`)**: Returns dynamic status JSON including helper fields tailored for external dashboards.
+
+---
+
+## Homepage Integration (gethomepage.dev)
+
+You can easily integrate `smtp2mqtt` with your Homepage dashboard using the pre-configured [homepage_widget.yaml](homepage_widget.yaml) configuration. It utilizes Homepage's `customapi` widget to map dynamic stats from the `/api` status endpoint.
+
+### Example Widget Configuration
+
+Add the following to your `services.yaml` or `widgets.yaml`:
+
+```yaml
+- customapi:
+    name: smtp2mqtt Gateway
+    icon: mdi-email-sync-outline
+    url: http://<smtp2mqtt-ip>:8080/api/status
+    method: GET
+    headers:
+      Accept: application/json
+    mappings:
+      - title: Messages
+        value: "{{processed_messages_count}}"
+        format: number
+      - title: Uptime
+        value: "{{uptime_formatted}}"
+      - title: SMTP
+        value: "{{smtp_status_text}}"
+        color: "{{#if (eq smtp_status_text 'Active')}}green{{else}}red{{/if}}"
+      - title: MQTT
+        value: "{{mqtt_status_text}}"
+        color: "{{#if (eq mqtt_status_text 'Connected')}}green{{else}}red{{/if}}"
+```
+
 
 ---
 
@@ -124,6 +167,40 @@ This project contains a comprehensive automated test suite to ensure robustness,
    ```
 
 The test suite includes both mock-based unit tests (testing attachment parsing and MQTT publishing logic without needing an active broker) and a full, end-to-end integration test (which spins up the real SMTP server on a random high port, initiates a real SMTP transaction using `smtplib`, and gracefully shuts down, confirming logs match expected behaviors).
+
+### Local Simulation & Interactive Testing
+
+For interactive local testing without needing a real MQTT broker or external SMTP servers, a comprehensive simulation tool is provided under `scratch/simulate.py`. This script spins up a mock MQTT broker on port `1883` and allows you to trigger mock email events instantly to verify parsing, attachment handling, and UI updates.
+
+#### 1. Start the Simulation Environment
+
+Run the simulation script with no arguments. This starts a mock MQTT broker in a background thread and opens an interactive console:
+```bash
+python scratch/simulate.py
+```
+
+#### 2. Run the smtp2mqtt Gateway
+
+In a separate terminal tab or window, run the main gateway application (ensuring you are in your virtual environment):
+```bash
+python smtp2mqtt.py
+```
+This automatically connects to the mock MQTT broker on `localhost:1883`, starts the SMTP receiver on port `1025`, and serves the live Web Status Dashboard on `http://localhost:8080`.
+
+#### 3. Trigger Mock Email Alerts
+
+Go back to the simulation terminal window. You can interact with the environment using simple keyboard commands:
+* Press **`E`** to send a mock security alert email to the SMTP server (listening on port `1025`). This email contains a sample camera JPEG snapshot.
+  * The gateway will receive the email, parse the attachment, save it in the `attachments/` directory, and publish a triggered state (`ON`) to the MQTT broker.
+  * After 10 seconds (default `MQTT_RESET_TIME`), the gateway automatically schedules and publishes a reset state (`OFF`) to the broker.
+* Press **`Q`** to shut down the simulation and stop the background mock broker cleanly.
+
+#### 4. Monitor Real-Time Status
+
+Open **`http://localhost:8080`** in your browser to view the dynamic dashboard. You will see:
+* Real-time pulsating status indicators showing that both the **SMTP Server** and **MQTT Broker** are healthy/online.
+* An interactive **Recent Actions** table listing all email transactions, their sender details, mapped MQTT topics, and payloads, fully protected from XSS.
+* Dynamic counts of processed messages and uptime tracking.
 
 ### Automated Testing (CI)
 

@@ -22,8 +22,8 @@ RUN chown -R appuser:appuser /app
 # Switch to non-privileged user
 USER appuser
 
-# Expose SMTP port
-EXPOSE 1025
+# Expose SMTP and Web Dashboard ports
+EXPOSE 1025 8080
 
 # Healthcheck configuration
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

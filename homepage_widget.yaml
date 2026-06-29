@@ -1,0 +1,24 @@
+# Homepage (gethomepage.dev) Custom API Widget Configuration for smtp2mqtt
+# 
+# Add this configuration to your homepage `widgets.yaml` or `services.yaml` file.
+# Make sure to replace `http://localhost:8080` with the actual address of your smtp2mqtt container.
+
+- customapi:
+    name: smtp2mqtt Gateway
+    icon: mdi-email-sync-outline
+    url: http://localhost:8080/api/status
+    method: GET
+    headers:
+      Accept: application/json
+    mappings:
+      - title: Messages
+        value: "{{processed_messages_count}}"
+        format: number
+      - title: Uptime
+        value: "{{uptime_formatted}}"
+      - title: SMTP
+        value: "{{smtp_status_text}}"
+        color: "{{#if (eq smtp_status_text 'Active')}}green{{else}}red{{/if}}"
+      - title: MQTT
+        value: "{{mqtt_status_text}}"
+        color: "{{#if (eq mqtt_status_text 'Connected')}}green{{else}}red{{/if}}"

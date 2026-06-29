@@ -7,6 +7,7 @@ import subprocess
 import asyncio
 import importlib
 import logging
+import json
 import unittest.mock as mock
 from email.message import EmailMessage
 import pytest
@@ -204,7 +205,7 @@ async def test_smtp2mqtt_handler_sanitizes_mqtt_topic():
         assert res == "250 Message accepted for delivery"
         # The '@' becomes '-', '+' and '#' and '/' should become '_'
         expected_topic = "smtp2mqtt/attacker_test___bypass-domain.com"
-        mock_pub.assert_called_once_with(expected_topic, "ON")
+        mock_pub.assert_called_once_with(expected_topic, "ON", "trigger", "attacker+test/#/bypass@domain.com")
         assert expected_topic in handler.handles
         
         handler.cancel_all_resets()
@@ -226,7 +227,7 @@ async def test_smtp2mqtt_handler_handle_data_basic():
         res = await handler.handle_DATA(None, None, envelope)
         
         assert res == "250 Message accepted for delivery"
-        mock_pub.assert_called_once_with("smtp2mqtt/sender-domain.com", "ON")
+        mock_pub.assert_called_once_with("smtp2mqtt/sender-domain.com", "ON", "trigger", "sender@domain.com")
         assert "smtp2mqtt/sender-domain.com" in handler.handles
         
         handler.cancel_all_resets()
@@ -341,7 +342,7 @@ async def test_smtp2mqtt_handler_trigger_reset():
         assert topic not in handler.handles
         
         await asyncio.sleep(0.1)
-        mock_pub.assert_called_once_with(topic, smtp2mqtt.config["MQTT_RESET_PAYLOAD"])
+        mock_pub.assert_called_once_with(topic, smtp2mqtt.config["MQTT_RESET_PAYLOAD"], "reset", "system")
 
 def test_smtp2mqtt_handler_cancel_all_resets():
     """Verify that cancel_all_resets cancels all pending reset timers."""
@@ -365,9 +366,11 @@ def test_smtp2mqtt_handler_cancel_all_resets():
 def test_main_function_graceful_run_and_exit():
     """Verify that main() initializes the gateway, runs the event loop, and shuts down cleanly."""
     mock_loop = mock.MagicMock(spec=asyncio.AbstractEventLoop)
+    mock_server = mock.MagicMock()
     
-    # We mock asyncio.new_event_loop to return our mock loop
+    # We mock asyncio.new_event_loop to return our mock loop and mock start_server
     with mock.patch("asyncio.new_event_loop", return_value=mock_loop), \
+         mock.patch("asyncio.start_server", return_value=mock_server), \
          mock.patch("smtp2mqtt.UnthreadedController") as mock_controller_cls:
         
         mock_controller = mock_controller_cls.return_value
@@ -448,3 +451,442 @@ def test_integration_flow():
         print(f"Server integration test failure stdout:\n{stdout}")
         print(f"Server integration test failure stderr:\n{stderr}")
         raise e
+
+
+# --- Additional Unit Tests for Web Server and State Tracking ---
+
+def test_recent_actions_truncation():
+    """Verify that recent_actions maintains a maximum of 20 items."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    # Clear and insert 25 actions
+    handler.recent_actions = []
+    for i in range(25):
+        handler.log_action("trigger", f"sender{i}@test.com", "topic", "payload", True)
+    assert len(handler.recent_actions) == 20
+    # The first element should be the latest (sender24)
+    assert handler.recent_actions[0]["sender"] == "sender24@test.com"
+
+def test_save_attachments_empty_safe_filename():
+    """Verify that an attachment with a filename that sanitizes to empty is ignored."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    smtp2mqtt.config["SAVE_ATTACHMENTS"] = True
+    
+    msg = EmailMessage()
+    part = mock.MagicMock()
+    part.get_content_type.return_value = "image/jpeg"
+    part.get_filename.return_value = "/" # Base name becomes empty string
+    
+    with mock.patch.object(msg, "iter_attachments", return_value=[part]):
+        handler.save_attachments(msg, "topic", is_triggered=False)
+    # Should not raise any error and should skip safely
+
+def test_get_status_json():
+    """Verify that get_status_json generates correct structure."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    status = handler.get_status_json()
+    assert status["status"] == "online"
+    assert "uptime_seconds" in status
+    assert "recent_actions" in status
+
+def test_get_dashboard_html():
+    """Verify that get_dashboard_html returns the template."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    html = handler.get_dashboard_html()
+    assert "smtp2mqtt Gateway" in html
+    assert "LIVE STATS" in html
+
+class DummyReader:
+    def __init__(self, lines):
+        self.lines = lines
+        self.index = 0
+    async def readline(self):
+        if self.index < len(self.lines):
+            val = self.lines[self.index]
+            self.index += 1
+            return val
+        return b""
+
+class DummyWriter:
+    def __init__(self):
+        self.data = b""
+        self.closed = False
+    def write(self, data):
+        self.data += data
+    async def drain(self):
+        pass
+    def close(self):
+        self.closed = True
+    async def wait_closed(self):
+        pass
+
+@pytest.mark.asyncio
+async def test_handle_web_client_api_endpoints():
+    """Verify that handle_web_client serves valid status JSON on api paths."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    for path in ["/api", "/api/status", "/status"]:
+        reader = DummyReader([f"GET {path} HTTP/1.1\r\n".encode(), b"Host: localhost\r\n", b"\r\n"])
+        writer = DummyWriter()
+        
+        await handler.handle_web_client(reader, writer)
+        
+        assert b"HTTP/1.1 200 OK" in writer.data
+        assert b"Content-Type: application/json" in writer.data
+        # Parse output JSON to make sure it is valid
+        header_part, body_part = writer.data.split(b"\r\n\r\n", 1)
+        data = json.loads(body_part.decode())
+        assert data["status"] == "online"
+        assert writer.closed
+
+@pytest.mark.asyncio
+async def test_handle_web_client_html_dashboard():
+    """Verify that handle_web_client serves HTML on root path."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    reader = DummyReader([b"GET / HTTP/1.1\r\n", b"Host: localhost\r\n", b"\r\n"])
+    writer = DummyWriter()
+    
+    await handler.handle_web_client(reader, writer)
+    
+    assert b"HTTP/1.1 200 OK" in writer.data
+    assert b"Content-Type: text/html; charset=utf-8" in writer.data
+    assert b"smtp2mqtt Gateway" in writer.data
+    assert writer.closed
+
+@pytest.mark.asyncio
+async def test_handle_web_client_404():
+    """Verify that handle_web_client returns 404 for unknown paths."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    reader = DummyReader([b"GET /notexist HTTP/1.1\r\n", b"\r\n"])
+    writer = DummyWriter()
+    
+    await handler.handle_web_client(reader, writer)
+    
+    assert b"HTTP/1.1 404 Not Found" in writer.data
+    assert b"Not Found" in writer.data
+    assert writer.closed
+
+@pytest.mark.asyncio
+async def test_handle_web_client_405():
+    """Verify that handle_web_client returns 405 for non-GET requests."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    reader = DummyReader([b"POST /api HTTP/1.1\r\n", b"\r\n"])
+    writer = DummyWriter()
+    
+    await handler.handle_web_client(reader, writer)
+    
+    assert b"HTTP/1.1 405 Method Not Allowed" in writer.data
+    assert b"Method Not Allowed" in writer.data
+    assert writer.closed
+
+@pytest.mark.asyncio
+async def test_handle_web_client_malformed_request_line():
+    """Verify that handle_web_client exits gracefully on malformed request lines."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    reader = DummyReader([b"GET\r\n", b"\r\n"])
+    writer = DummyWriter()
+    
+    await handler.handle_web_client(reader, writer)
+    assert writer.data == b"" # No response headers written
+
+@pytest.mark.asyncio
+async def test_handle_web_client_empty_request():
+    """Verify that handle_web_client exits gracefully on empty request."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    reader = DummyReader([b"\r\n"])
+    writer = DummyWriter()
+    
+    await handler.handle_web_client(reader, writer)
+    assert writer.data == b""
+
+@pytest.mark.asyncio
+async def test_handle_web_client_exception():
+    """Verify that handle_web_client handles exceptions cleanly without raising them."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Passing None to cause exceptions during readline
+    await handler.handle_web_client(None, None)
+    # Should not raise any unhandled exceptions
+
+
+@pytest.mark.asyncio
+async def test_mqtt_broker_monitor_and_socket_check(monkeypatch):
+    """Verify that monitor_mqtt_broker checks connectivity and transitions correctly."""
+    loop = asyncio.get_running_loop()
+    
+    # We will mock asyncio.sleep to not wait 10 seconds
+    sleep_calls = {}
+    async def mock_sleep(seconds):
+        task = asyncio.current_task()
+        if task not in sleep_calls:
+            sleep_calls[task] = []
+        sleep_calls[task].append(seconds)
+        if len(sleep_calls[task]) >= 3:
+            raise asyncio.CancelledError()
+    
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    
+    # We will mock _check_socket_connection to return True, then False, then True for MQTT,
+    # and always True for SMTP to prevent interference.
+    check_results = [True, False, True]
+    current_index = 0
+    
+    def mock_check_socket_connection(self, host, port):
+        nonlocal current_index
+        if port == 1025:  # SMTP port
+            return True
+        res = check_results[current_index % len(check_results)]
+        current_index += 1
+        return res
+        
+    monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_check_socket_connection", mock_check_socket_connection)
+    
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Let's wait a bit to let the task execute its iterations.
+    try:
+        await asyncio.wait_for(handler.monitor_task, timeout=1.0)
+    except asyncio.CancelledError:
+        pass # Task exited because of CancelledError in mock_sleep
+        
+    # Assertions
+    # Initial check (index 0) returned True.
+    # Second check (index 1) returned False -> transition to offline logged.
+    # Third check (index 2) returned True -> transition back to online logged.
+    assert handler.mqtt_connected_status is True
+    assert len(sleep_calls) >= 1
+    
+    # Cancel all background tasks before undoing monkeypatch to avoid unawaited tasks
+    handler.cancel_all_resets()
+    
+    # Test _check_socket_connection directly
+    import socket
+    conn_calls = []
+    def mock_create_connection(address, timeout):
+        conn_calls.append((address, timeout))
+        if address[0] == "offline":
+            raise OSError("Connection refused")
+        return mock.MagicMock()
+        
+    monkeypatch.undo()
+    monkeypatch.setattr(socket, "create_connection", mock_create_connection)
+    
+    assert handler._check_socket_connection("online", 1883) is True
+    assert handler._check_socket_connection("offline", 1883) is False
+
+
+@pytest.mark.asyncio
+async def test_smtp_server_monitor_and_socket_check(monkeypatch):
+    """Verify that monitor_smtp_server checks connectivity and transitions correctly."""
+    loop = asyncio.get_running_loop()
+    
+    # We will mock asyncio.sleep to not wait 10 seconds
+    sleep_calls = {}
+    async def mock_sleep(seconds):
+        task = asyncio.current_task()
+        if task not in sleep_calls:
+            sleep_calls[task] = []
+        sleep_calls[task].append(seconds)
+        if len(sleep_calls[task]) >= 3:
+            raise asyncio.CancelledError()
+    
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    
+    # We will mock _check_socket_connection to return True, then False, then True for SMTP,
+    # and always True for MQTT to prevent interference.
+    check_results = [True, False, True]
+    current_index = 0
+    
+    def mock_check_socket_connection(self, host, port):
+        nonlocal current_index
+        if port == 1883:  # MQTT port
+            return True
+        res = check_results[current_index % len(check_results)]
+        current_index += 1
+        return res
+        
+    monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_check_socket_connection", mock_check_socket_connection)
+    
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Let's wait a bit to let the task execute its iterations.
+    try:
+        await asyncio.wait_for(handler.monitor_smtp_task, timeout=1.0)
+    except asyncio.CancelledError:
+        pass # Task exited because of CancelledError in mock_sleep
+        
+    # Assertions
+    assert handler.smtp_connected_status is True
+    assert len(sleep_calls) >= 1
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_get_status_json_formats(monkeypatch):
+    """Verify correct formatting of uptime_formatted and connection helper texts."""
+    from datetime import datetime, timedelta
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Test 1: Uptime < 60s
+    handler.start_time = datetime.now() - timedelta(seconds=45)
+    handler.mqtt_connected_status = True
+    handler.smtp_connected_status_val = True
+    status = handler.get_status_json()
+    assert status["uptime_formatted"] == "45s"
+    assert status["mqtt_status_text"] == "Connected"
+    assert status["smtp_status_text"] == "Active"
+
+    # Test 2: Uptime < 3600s
+    handler.start_time = datetime.now() - timedelta(minutes=15, seconds=30)
+    handler.mqtt_connected_status = False
+    handler.smtp_connected_status_val = False
+    status = handler.get_status_json()
+    assert status["uptime_formatted"] == "15m 30s"
+    assert status["mqtt_status_text"] == "Disconnected"
+    assert status["smtp_status_text"] == "Inactive"
+
+    # Test 3: Uptime >= 3600s
+    handler.start_time = datetime.now() - timedelta(hours=3, minutes=10, seconds=45)
+    status = handler.get_status_json()
+    assert status["uptime_formatted"] == "3h 10m"
+    
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_smtp_controller_status_checks(monkeypatch):
+    """Verify that monitor_smtp_server uses UnthreadedController to check state without falling back."""
+    loop = asyncio.get_running_loop()
+    
+    # Mock UnthreadedController
+    class MockServer:
+        def is_serving(self):
+            return True
+            
+    class MockController:
+        def __init__(self, handler, hostname, port):
+            self.server = MockServer()
+            
+    monkeypatch.setattr(smtp2mqtt, "UnthreadedController", MockController)
+    
+    # Mock sleep to run twice, allowing one iteration after setting smtp_controller, then cancel
+    sleep_calls = []
+    async def mock_sleep(seconds):
+        sleep_calls.append(seconds)
+        if len(sleep_calls) >= 2:
+            raise asyncio.CancelledError()
+        
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Set active smtp_controller on the handler
+    handler.smtp_controller = MockController(None, "127.0.0.1", 1025)
+    
+    try:
+        await asyncio.wait_for(handler.monitor_smtp_task, timeout=1.0)
+    except asyncio.CancelledError:
+        pass
+        
+    assert handler.smtp_connected_status is True
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_web_server_security_limits():
+    """Verify that handle_web_client restricts header reading to 100 headers to prevent DoS."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Create mock reader and writer
+    class MockReader:
+        def __init__(self):
+            self.readline_count = 0
+            
+        async def readline(self):
+            self.readline_count += 1
+            if self.readline_count == 1:
+                return b"GET /api HTTP/1.1\r\n"
+            else:
+                return b"X-Flood-Header: flood\r\n"
+                
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+            self.is_closed = False
+            
+        def write(self, data):
+            self.write_data += data
+            
+        async def drain(self):
+            pass
+            
+        def close(self):
+            self.is_closed = True
+            
+        async def wait_closed(self):
+            pass
+            
+    reader = MockReader()
+    writer = MockWriter()
+    
+    await handler.handle_web_client(reader, writer)
+    
+    assert reader.readline_count <= 102
+    assert b"200 OK" in writer.write_data
+    assert writer.is_closed is True
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_monitor_exceptions_handling(monkeypatch):
+    """Verify that the monitors handle unexpected exceptions gracefully."""
+    loop = asyncio.get_running_loop()
+    
+    def mock_check_socket_connection_raise(self, host, port):
+        raise RuntimeError("Unexpected failure")
+        
+    monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_check_socket_connection", mock_check_socket_connection_raise)
+    
+    sleep_calls = []
+    async def mock_sleep(seconds):
+        sleep_calls.append(seconds)
+        raise asyncio.CancelledError()
+        
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    try:
+         await asyncio.wait_for(handler.monitor_task, timeout=1.0)
+    except asyncio.CancelledError:
+         pass
+         
+    try:
+         await asyncio.wait_for(handler.monitor_smtp_task, timeout=1.0)
+    except asyncio.CancelledError:
+         pass
+         
+    assert handler.mqtt_connected_status is None
+    assert handler.smtp_connected_status is False
+    handler.cancel_all_resets()
+
+
+
+
