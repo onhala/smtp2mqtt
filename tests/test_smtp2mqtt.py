@@ -17,6 +17,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import smtp2mqtt
 
+@pytest.fixture(autouse=True)
+def prevent_real_socket_connections(monkeypatch):
+    """Prevent any background monitoring threads from making real network connections by default."""
+    monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_check_socket_connection", lambda self, host, port: False)
+
 def test_parse_bool():
     """Verify boolean parsing helper handles various values correctly."""
     assert smtp2mqtt.parse_bool("True") is True
@@ -1164,6 +1169,11 @@ async def test_monitor_mqtt_broker_logs_state_changes_to_actions(monkeypatch):
     """Verify that MQTT broker monitor logs state changes (system actions) correctly on transition."""
     loop = asyncio.get_running_loop()
     handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Cancel background resets and reset status/actions to prevent race conditions/test pollution
+    handler.cancel_all_resets()
+    handler.mqtt_connected_status = None
+    handler.recent_actions.clear()
 
     connection_states = [True, False, True]
     state_index = 0
@@ -1316,3 +1326,296 @@ async def test_handle_web_client_attachment_read_exception(monkeypatch):
     assert b"500 Internal Server Error" in writer.write_data
     assert b"Internal Server Error" in writer.write_data
     handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_monitor_mqtt_broker_initial_offline(monkeypatch):
+    """Verify MQTT monitor logs offline state initially when broker check fails."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Cancel background resets and reset status/actions to prevent race conditions/test pollution
+    handler.cancel_all_resets()
+    handler.mqtt_connected_status = None
+    handler.recent_actions.clear()
+    
+    assert handler.mqtt_connected_status is None
+    
+    monkeypatch.setattr(handler, "_check_socket_connection", lambda h, p: False)
+    
+    async def mock_sleep(seconds):
+        raise asyncio.CancelledError()
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    
+    try:
+        await handler.monitor_mqtt_broker()
+    except asyncio.CancelledError:
+        pass
+    
+    assert handler.mqtt_connected_status is False
+    system_actions = [a for a in handler.recent_actions if a["type"] == "system"]
+    assert len(system_actions) == 1
+    assert "Offline (Unreachable)" in system_actions[0]["payload"]
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_monitor_smtp_server_exception(monkeypatch):
+    """Verify SMTP server monitor handles internal check exception gracefully."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Cancel background resets and reset status/actions to prevent race conditions/test pollution
+    handler.cancel_all_resets()
+    handler.smtp_connected_status_val = None
+    handler.recent_actions.clear()
+    
+    mock_server = mock.MagicMock()
+    mock_server.is_serving.side_effect = Exception("Mock server exception")
+    
+    mock_controller = mock.MagicMock()
+    mock_controller.server = mock_server
+    handler.smtp_controller = mock_controller
+    
+    monkeypatch.setattr(handler, "_check_socket_connection", lambda h, p: False)
+    
+    async def mock_sleep(seconds):
+        raise asyncio.CancelledError()
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    
+    try:
+        await handler.monitor_smtp_server()
+    except asyncio.CancelledError:
+        pass
+        
+    assert handler.smtp_connected_status_val is False
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_monitor_smtp_server_initial_inactive(monkeypatch):
+    """Verify SMTP server monitor logs inactive initially when port check fails."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Cancel background resets and reset status/actions to prevent race conditions/test pollution
+    handler.cancel_all_resets()
+    handler.smtp_connected_status_val = None
+    handler.recent_actions.clear()
+    
+    assert handler.smtp_connected_status_val is None
+    
+    handler.smtp_controller = None
+    monkeypatch.setattr(handler, "_check_socket_connection", lambda h, p: False)
+    
+    async def mock_sleep(seconds):
+        raise asyncio.CancelledError()
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+    
+    try:
+        await handler.monitor_smtp_server()
+    except asyncio.CancelledError:
+        pass
+        
+    assert handler.smtp_connected_status_val is False
+    handler.cancel_all_resets()
+
+
+def setup_custom_new_event_loop(monkeypatch, run_forever_cb=None, add_signal_handler_cb=None):
+    """Sets up a robust mock of asyncio.new_event_loop that returns a real loop
+    but intercepts run_forever and run_until_complete to allow testing the entrypoints
+    without hanging.
+    """
+    orig_new_loop = asyncio.new_event_loop
+    def custom_new_event_loop():
+        loop = orig_new_loop()
+        
+        # Override add_signal_handler if a callback is provided
+        if add_signal_handler_cb:
+            loop.add_signal_handler = add_signal_handler_cb
+        else:
+            loop.add_signal_handler = lambda *args, **kwargs: None
+            
+        orig_run_until_complete = loop.run_until_complete
+        loop._in_run_until_complete = False
+        
+        def custom_run_until_complete(future):
+            loop._in_run_until_complete = True
+            try:
+                return orig_run_until_complete(future)
+            finally:
+                loop._in_run_until_complete = False
+        loop.run_until_complete = custom_run_until_complete
+        
+        orig_run_forever = loop.run_forever
+        def mock_run_forever():
+            if loop._in_run_until_complete:
+                orig_run_forever()
+            else:
+                if run_forever_cb:
+                    run_forever_cb()
+        loop.run_forever = mock_run_forever
+        
+        return loop
+    monkeypatch.setattr(asyncio, "new_event_loop", custom_new_event_loop)
+
+
+def test_main_web_server_start_exception(monkeypatch):
+    """Verify web server startup fallback when start_server raises an exception."""
+    orig_enable_web = smtp2mqtt.config["ENABLE_WEB"]
+    smtp2mqtt.config["ENABLE_WEB"] = True
+    
+    mock_controller_class = mock.MagicMock()
+    monkeypatch.setattr(smtp2mqtt, "UnthreadedController", mock_controller_class)
+    
+    async def mock_start_server(*args, **kwargs):
+        raise Exception("Port already in use")
+    monkeypatch.setattr(asyncio, "start_server", mock_start_server)
+    
+    setup_custom_new_event_loop(monkeypatch)
+    
+    try:
+        smtp2mqtt.main()
+    finally:
+        smtp2mqtt.config["ENABLE_WEB"] = orig_enable_web
+
+
+def test_main_shutdown_signal_callback(monkeypatch):
+    """Verify registration and callback triggering of OS termination signals."""
+    orig_enable_web = smtp2mqtt.config["ENABLE_WEB"]
+    smtp2mqtt.config["ENABLE_WEB"] = False
+    
+    mock_controller_class = mock.MagicMock()
+    monkeypatch.setattr(smtp2mqtt, "UnthreadedController", mock_controller_class)
+    
+    captured_callbacks = []
+    def mock_add_signal_handler(sig, callback, *args):
+        captured_callbacks.append(callback)
+    
+    def mock_run_forever():
+        for cb in captured_callbacks:
+            cb()
+            
+    setup_custom_new_event_loop(
+        monkeypatch,
+        run_forever_cb=mock_run_forever,
+        add_signal_handler_cb=mock_add_signal_handler,
+    )
+    
+    try:
+        smtp2mqtt.main()
+    finally:
+        smtp2mqtt.config["ENABLE_WEB"] = orig_enable_web
+        
+    assert len(captured_callbacks) > 0
+
+
+def test_main_signal_registration_exception(monkeypatch):
+    """Verify registration exception handling for OS signal handlers."""
+    orig_enable_web = smtp2mqtt.config["ENABLE_WEB"]
+    smtp2mqtt.config["ENABLE_WEB"] = False
+    
+    mock_controller_class = mock.MagicMock()
+    monkeypatch.setattr(smtp2mqtt, "UnthreadedController", mock_controller_class)
+    
+    def mock_add_signal_handler_raise(sig, callback, *args):
+        raise ValueError("Mock signal registration failure")
+        
+    setup_custom_new_event_loop(
+        monkeypatch,
+        add_signal_handler_cb=mock_add_signal_handler_raise,
+    )
+    
+    try:
+        smtp2mqtt.main()
+    finally:
+        smtp2mqtt.config["ENABLE_WEB"] = orig_enable_web
+
+
+def test_main_event_loop_unhandled_exception(monkeypatch):
+    """Verify main event loop handles standard exceptions during execution."""
+    orig_enable_web = smtp2mqtt.config["ENABLE_WEB"]
+    smtp2mqtt.config["ENABLE_WEB"] = False
+    
+    mock_controller_class = mock.MagicMock()
+    monkeypatch.setattr(smtp2mqtt, "UnthreadedController", mock_controller_class)
+    
+    def mock_run_forever_raise():
+        raise RuntimeError("Mock unhandled loop crash")
+        
+    setup_custom_new_event_loop(
+        monkeypatch,
+        run_forever_cb=mock_run_forever_raise,
+    )
+    
+    try:
+        smtp2mqtt.main()
+    finally:
+        smtp2mqtt.config["ENABLE_WEB"] = orig_enable_web
+
+
+def test_main_controller_end_exception(monkeypatch):
+    """Verify cleanup logs and handles exception during SMTP controller termination."""
+    orig_enable_web = smtp2mqtt.config["ENABLE_WEB"]
+    smtp2mqtt.config["ENABLE_WEB"] = False
+    
+    mock_controller = mock.MagicMock()
+    mock_controller.end.side_effect = Exception("Failed to end controller")
+    
+    monkeypatch.setattr(smtp2mqtt, "UnthreadedController", lambda *args, **kwargs: mock_controller)
+    
+    setup_custom_new_event_loop(monkeypatch)
+    
+    try:
+        smtp2mqtt.main()
+    finally:
+        smtp2mqtt.config["ENABLE_WEB"] = orig_enable_web
+
+
+def test_main_web_server_close_exception(monkeypatch):
+    """Verify cleanup handles exception during web server close wait gracefully."""
+    orig_enable_web = smtp2mqtt.config["ENABLE_WEB"]
+    smtp2mqtt.config["ENABLE_WEB"] = True
+    
+    mock_controller_class = mock.MagicMock()
+    monkeypatch.setattr(smtp2mqtt, "UnthreadedController", mock_controller_class)
+    
+    mock_web_server = mock.MagicMock()
+    async def mock_wait_closed():
+        raise Exception("Mock wait_closed failure")
+    mock_web_server.wait_closed = mock_wait_closed
+    
+    async def mock_start_server(*args, **kwargs):
+        return mock_web_server
+    monkeypatch.setattr(asyncio, "start_server", mock_start_server)
+    
+    setup_custom_new_event_loop(monkeypatch)
+    
+    try:
+        smtp2mqtt.main()
+    finally:
+        smtp2mqtt.config["ENABLE_WEB"] = orig_enable_web
+
+
+
+def test_main_entrypoint_keyboard_interrupt(monkeypatch):
+    """Verify that KeyboardInterrupt on __main__ block exits cleanly."""
+    import runpy
+    def mock_new_event_loop():
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(asyncio, "new_event_loop", mock_new_event_loop)
+    
+    # runpy executes module code under main name
+    runpy.run_path("smtp2mqtt.py", run_name="__main__")
+
+
+def test_main_entrypoint_unhandled_exception(monkeypatch):
+    """Verify that standard Exception on __main__ block prints logs and exits with code 1."""
+    import runpy
+    def mock_new_event_loop():
+        raise RuntimeError("Crashed entrypoint")
+    monkeypatch.setattr(asyncio, "new_event_loop", mock_new_event_loop)
+    
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_path("smtp2mqtt.py", run_name="__main__")
+    assert excinfo.value.code == 1
