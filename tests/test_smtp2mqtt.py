@@ -59,6 +59,28 @@ def test_file_logger_setup_if_log_dir_exists():
         if os.path.exists("log"):
             shutil.rmtree("log")
 
+def test_file_logger_setup_permission_error():
+    """Verify that if FileHandler fails, we gracefully catch the error and log it."""
+    os.makedirs("log", exist_ok=True)
+    # Mock log.error on the module level logger or mock logging.FileHandler
+    original_handlers = list(smtp2mqtt.log.handlers)
+    try:
+        with mock.patch("logging.FileHandler", side_effect=PermissionError("Permission denied")):
+            with mock.patch("logging.Logger.error") as mock_error:
+                importlib.reload(smtp2mqtt)
+                # Verify that log.error was called
+                any_msg_matches = any("Failed to set up file logger" in call[0][0] for call in mock_error.call_args_list)
+                assert any_msg_matches is True
+    finally:
+        # Cleanup log directory and any new handlers added
+        for h in list(smtp2mqtt.log.handlers):
+            if h not in original_handlers:
+                if isinstance(h, logging.FileHandler):
+                    h.close()
+                smtp2mqtt.log.removeHandler(h)
+        if os.path.exists("log"):
+            shutil.rmtree("log")
+
 @pytest.mark.asyncio
 async def test_smtp2mqtt_handler_saves_attachments():
     """Verify that attachments are parsed and stored in the attachments directory."""
