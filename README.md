@@ -2,7 +2,8 @@
 
 A lightweight, high-performance, and fully asynchronous SMTP-to-MQTT bridge. It runs an unthreaded SMTP gateway, receives emails (e.g., motion detection trigger emails from Hikvision cameras), and publishes trigger payloads directly to an MQTT broker.
 
-This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10+ / 3.12+), resolving event loop issues and utilizing non-blocking asynchronous IO. It is specifically designed to integrate camera motion detection triggers with automation systems like **Loxberry (MQTT Gateway) and Loxone**.
+This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10+ / 3.13+), resolving event loop issues and utilizing non-blocking asynchronous IO. It is specifically designed to integrate camera motion detection triggers with automation systems like **Loxberry (MQTT Gateway) and Loxone**.
+
 
 ---
 
@@ -49,7 +50,8 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 
 ## Running with Docker
 
-The container is built on top of the official, ultra-lightweight `python:3.12-slim` image and runs inside `/app`.
+The container is built on top of the official, ultra-lightweight `python:3.13-slim` image and runs inside `/app`.
+
 
 ### 1. Build the Docker Image
 ```bash
