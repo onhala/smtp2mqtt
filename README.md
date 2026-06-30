@@ -147,7 +147,8 @@ Run the container on your host machine or server (e.g., Loxberry/Synology/RPi). 
 ```bash
 docker run -d \
     --name smtp2mqtt \
-    --net host \
+    -p 1025:1025 \
+    -p 8080:8080 \
     --restart always \
     -e "SMTP_PORT=1025" \
     -e "MQTT_HOST=192.168.1.50" \
@@ -160,6 +161,9 @@ docker run -d \
     -v smtp2mqtt_attachments:/app/attachments \
     ghcr.io/onhala/smtp2mqtt:latest
 ```
+
+> [!NOTE]
+> Standard bridge networking is fully supported. You do **not** need to run with `--net host`, which provides better isolation and makes the gateway fully compatible with all environments (including Docker Desktop on macOS and Windows).
 
 > [!TIP]
 > We use **Docker Named Volumes** (`smtp2mqtt_log` and `smtp2mqtt_attachments`) by default because Docker manages them automatically and ensures correct write permissions for the container's non-root user.

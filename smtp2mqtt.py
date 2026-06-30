@@ -82,6 +82,7 @@ class smtp2mqttHandler:
         self.loop = loop
         self.reset_time: int = config["MQTT_RESET_TIME"]
         self.handles: Dict[str, asyncio.TimerHandle] = {}
+        self.background_tasks = set()
         
         # State tracking for Web Status Dashboard and gethomepage.dev
         self.start_time = datetime.now()
@@ -168,16 +169,6 @@ class smtp2mqttHandler:
         """Processes incoming SMTP email messages."""
         mail_from = envelope.mail_from
         log.info("Received SMTP message from %s", mail_from)
-        
-        try:
-            msg = email.message_from_bytes(envelope.original_content, policy=default)
-            log.debug(
-                "Message data (truncated): %s",
-                envelope.content.decode("utf-8", errors="replace")[:250],
-            )
-        except Exception:
-            log.exception("Failed to parse incoming email content")
-            return "500 Error parsing message"
 
         # Construct topic based on sender, sanitizing dangerous MQTT wildcard characters
         sanitized_sender = (
@@ -198,22 +189,15 @@ class smtp2mqttHandler:
             not is_triggered or config["SAVE_ATTACHMENTS_DURING_RESET_TIME"]
         )
 
-        saved_attachments = []
         if should_save:
-            log.debug("Dispatching attachment save task...")
-            saved_attachments = await asyncio.to_thread(self.save_attachments, msg, topic, is_triggered)
+            log.debug("Dispatching background attachment save task...")
+            # Schedule non-blocking background task to parse email and save attachments
+            task = self.loop.create_task(
+                self._process_attachments_background(envelope.original_content, topic, mail_from, is_triggered)
+            )
+            self.background_tasks.add(task)
         else:
             log.debug("Skipping attachment storage (disabled or reset time constraint)")
-
-        # Associate attachments with the recent trigger action logged inside mqtt_publish thread
-        if saved_attachments and self.recent_actions:
-            first_action = self.recent_actions[0]
-            if (
-                first_action["type"] == "trigger"
-                and first_action["sender"] == mail_from
-                and first_action["topic"] == topic
-            ):
-                first_action["attachments"] = saved_attachments
 
         # Cancel any pending reset timers for this topic
         if topic in self.handles:
@@ -228,6 +212,33 @@ class smtp2mqttHandler:
             )
 
         return "250 Message accepted for delivery"
+
+    async def _process_attachments_background(self, original_content: bytes, topic: str, mail_from: str, is_triggered: bool) -> None:
+        """Parses the email content and saves attachments in the background."""
+        try:
+            # Parse the email message bytes in an executor to avoid blocking the main event loop
+            msg = await asyncio.to_thread(email.message_from_bytes, original_content, policy=default)
+            
+            # Save attachments in the thread executor
+            saved_attachments = await asyncio.to_thread(self.save_attachments, msg, topic, is_triggered)
+            
+            # Associate attachments with the recent trigger action
+            if saved_attachments and self.recent_actions:
+                for action in self.recent_actions:
+                    if (
+                        action["type"] == "trigger"
+                        and action["sender"] == mail_from
+                        and action["topic"] == topic
+                    ):
+                        action["attachments"] = saved_attachments
+                        log.debug("Associated %d saved attachments with trigger action", len(saved_attachments))
+                        break
+        except Exception:
+            log.exception("Error processing email message or attachments in the background")
+        finally:
+            task = asyncio.current_task()
+            if task in self.background_tasks:
+                self.background_tasks.remove(task)
 
     def save_attachments(self, msg: Any, topic: str, is_triggered: bool) -> List[Dict[str, Any]]:
         """Iterates through and saves image attachments to the local filesystem.
@@ -279,16 +290,19 @@ class smtp2mqttHandler:
             log.exception("Exception occurred while saving attachments")
         return saved_files
 
-    def mqtt_publish(self, topic: str, payload: str, action_type: str = "trigger", sender: str = "system") -> None:
-        """Publishes a payload to MQTT broker (synchronous blocking network call)."""
+    def mqtt_publish(self, topic: str, payload: str, action_type: str = "trigger", sender: str = "system", wait_for_publish: bool = False) -> None:
+        """Publishes a payload to MQTT broker."""
         log.info("Publishing payload '%s' to topic '%s'", payload, topic)
         success = False
         try:
             if hasattr(self, "_mqtt_client") and self._mqtt_client is not None:
                 # Send instantly and asynchronously via the persistent background client connection
                 info = self._mqtt_client.publish(topic, payload, qos=0)
-                info.wait_for_publish(timeout=2.0)
-                success = info.is_published()
+                if wait_for_publish:
+                    info.wait_for_publish(timeout=2.0)
+                    success = info.is_published()
+                else:
+                    success = (info.rc == mqtt.MQTT_ERR_SUCCESS)
             else:
                 # Fallback to single publish if persistent client is not active (e.g. mock testing)
                 auth_dict = None
@@ -317,10 +331,13 @@ class smtp2mqttHandler:
             self.handles.pop(topic)
         log.info("Reset timer expired. Resetting topic: %s", topic)
         
-        # Schedule the blocking mqtt_publish call in a separate thread executor via create_task
-        asyncio.create_task(
-            asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_RESET_PAYLOAD"], "reset", "system")
-        )
+        # Schedule the fast-path publish or thread-fallback
+        if hasattr(self, "_mqtt_client") and self._mqtt_client is not None:
+            self.mqtt_publish(topic, config["MQTT_RESET_PAYLOAD"], "reset", "system", wait_for_publish=False)
+        else:
+            asyncio.create_task(
+                asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_RESET_PAYLOAD"], "reset", "system", False)
+            )
 
     def cancel_all_resets(self) -> None:
         """Cancels all currently pending reset timers and background tasks (used for graceful shutdown)."""
@@ -328,6 +345,13 @@ class smtp2mqttHandler:
             self.monitor_task.cancel()
         if hasattr(self, "monitor_smtp_task") and self.monitor_smtp_task and not self.monitor_smtp_task.done():
             self.monitor_smtp_task.cancel()
+        
+        # Cancel any active background attachment tasks
+        if hasattr(self, "background_tasks") and self.background_tasks:
+            log.info("Cancelling %d background attachment tasks...", len(self.background_tasks))
+            for task in list(self.background_tasks):
+                task.cancel()
+            self.background_tasks.clear()
         
         # Stop and disconnect persistent MQTT client
         if hasattr(self, "_mqtt_client") and self._mqtt_client is not None:

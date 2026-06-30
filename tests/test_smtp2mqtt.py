@@ -261,9 +261,10 @@ async def test_smtp2mqtt_handler_handle_data_basic():
 
 @pytest.mark.asyncio
 async def test_smtp2mqtt_handler_handle_data_parse_error():
-    """Verify that handle_DATA returns a 500 error on message parsing failure."""
+    """Verify that message parsing failure in the background is handled gracefully and does not block acceptance."""
     loop = asyncio.get_running_loop()
     handler = smtp2mqtt.smtp2mqttHandler(loop)
+    smtp2mqtt.config["SAVE_ATTACHMENTS"] = True
     
     envelope = mock.MagicMock()
     envelope.mail_from = "sender@domain.com"
@@ -271,7 +272,13 @@ async def test_smtp2mqtt_handler_handle_data_parse_error():
     
     with mock.patch("email.message_from_bytes", side_effect=Exception("parse error")):
         res = await handler.handle_DATA(None, None, envelope)
-        assert "500 Error parsing message" in res
+        assert res == "250 Message accepted for delivery"
+        
+        # Wait for the background task to complete and handle the error
+        if handler.background_tasks:
+            await asyncio.gather(*handler.background_tasks)
+            
+    handler.cancel_all_resets()
 
 @pytest.mark.asyncio
 async def test_smtp2mqtt_handler_save_attachments_during_reset_time_logic():
@@ -302,6 +309,8 @@ async def test_smtp2mqtt_handler_save_attachments_during_reset_time_logic():
     with mock.patch.object(handler, "mqtt_publish"), \
          mock.patch.object(handler, "save_attachments") as mock_save:
         await handler.handle_DATA(None, None, envelope)
+        if handler.background_tasks:
+            await asyncio.gather(*handler.background_tasks)
         mock_save.assert_called_once()
         
     handler.cancel_all_resets()
@@ -366,7 +375,7 @@ def test_mqtt_publish_persistent():
     
     handler._mqtt_client = mock_client
     
-    handler.mqtt_publish("test-topic", "ON")
+    handler.mqtt_publish("test-topic", "ON", wait_for_publish=True)
     
     mock_client.publish.assert_called_once_with("test-topic", "ON", qos=0)
     mock_info.wait_for_publish.assert_called_once_with(timeout=2.0)
@@ -388,7 +397,7 @@ async def test_smtp2mqtt_handler_trigger_reset():
         assert topic not in handler.handles
         
         await asyncio.sleep(0.1)
-        mock_pub.assert_called_once_with(topic, smtp2mqtt.config["MQTT_RESET_PAYLOAD"], "reset", "system")
+        mock_pub.assert_called_once_with(topic, smtp2mqtt.config["MQTT_RESET_PAYLOAD"], "reset", "system", False)
 
 def test_smtp2mqtt_handler_cancel_all_resets():
     """Verify that cancel_all_resets cancels all pending reset timers."""
@@ -1257,6 +1266,7 @@ async def test_handle_data_associates_attachments_to_recent_actions(monkeypatch)
     """Verify that handle_DATA associates saved attachments to the corresponding trigger action."""
     loop = asyncio.get_running_loop()
     handler = smtp2mqtt.smtp2mqttHandler(loop)
+    smtp2mqtt.config["SAVE_ATTACHMENTS"] = True
     
     # Pre-populate self.recent_actions with the expected trigger action
     handler.recent_actions = [
@@ -1277,7 +1287,10 @@ async def test_handle_data_associates_attachments_to_recent_actions(monkeypatch)
     mock_attachments = [{"filename": "test.jpg", "path": "attachments/test.jpg", "size": 123}]
     
     async def mock_to_thread(func, *args, **kwargs):
-        if func == handler.save_attachments:
+        name = getattr(func, "__name__", None)
+        print(f"\n[DEBUG] mock_to_thread called with func={func}, name={name}, args={args}")
+        if name == "save_attachments":
+            print(f"[DEBUG] mock_to_thread matching save_attachments! Returning {mock_attachments}")
             return mock_attachments
         return None
         
@@ -1286,9 +1299,16 @@ async def test_handle_data_associates_attachments_to_recent_actions(monkeypatch)
     res = await handler.handle_DATA(None, None, envelope)
     assert res == "250 Message accepted for delivery"
     
+    # Wait for the background task to complete
+    if handler.background_tasks:
+        await asyncio.gather(*handler.background_tasks)
+    
     # Assert attachments were associated to the trigger action
-    assert handler.recent_actions[0]["attachments"] == mock_attachments
+    trigger_actions = [a for a in handler.recent_actions if a.get("type") == "trigger"]
+    assert len(trigger_actions) > 0, "No trigger action found in recent_actions"
+    assert trigger_actions[0]["attachments"] == mock_attachments
     handler.cancel_all_resets()
+
 
 
 @pytest.mark.asyncio

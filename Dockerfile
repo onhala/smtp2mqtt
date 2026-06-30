@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application script, healthcheck, and static assets
 COPY smtp2mqtt.py healthcheck.py logo.svg favicon.svg ./
-RUN chown -R appuser:appuser /app
+RUN chmod +x smtp2mqtt.py && chown -R appuser:appuser /app
 
 # Switch to non-privileged user
 USER appuser
@@ -30,5 +30,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD ["python", "healthcheck.py"]
 
 # Run the app
-CMD ["python", "smtp2mqtt.py"]
+ENTRYPOINT ["/app/smtp2mqtt.py"]
+
 
