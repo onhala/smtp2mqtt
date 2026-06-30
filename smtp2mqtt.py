@@ -82,7 +82,7 @@ if os.path.exists("log"):
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.7.0"
+VERSION = "1.6.0"
 
 
 class smtp2mqttHandler:
@@ -100,6 +100,7 @@ class smtp2mqttHandler:
         self.recent_actions: List[Dict[str, Any]] = []  # List of dicts
         self.latest_version: Optional[str] = None
         self.update_available: bool = False
+        self.version_check_status: str = "pending"
         
         # MQTT Broker connection monitoring
         self.mqtt_connected_status: Optional[bool] = None
@@ -474,16 +475,21 @@ class smtp2mqttHandler:
 
     async def perform_version_check(self) -> None:
         """Queries GitHub for the latest version and compares it to the local version."""
+        self.version_check_status = "checking"
         try:
             latest = await asyncio.to_thread(self._fetch_latest_release_from_github)
             if latest:
                 self.latest_version = latest
                 self.update_available = self._is_update_available(VERSION, latest)
+                self.version_check_status = "success"
                 if self.update_available:
                     log.info("Newer version available on GitHub: %s (current: %s)", latest, VERSION)
                 else:
                     log.info("smtp2mqtt is up to date (current: %s, latest: %s)", VERSION, latest)
+            else:
+                self.version_check_status = "failed"
         except Exception as e:
+            self.version_check_status = "failed"
             log.error("Failed to perform version check: %s", e)
 
     def _fetch_latest_release_from_github(self) -> Optional[str]:
@@ -652,6 +658,7 @@ class smtp2mqttHandler:
             "version": VERSION,
             "latest_version": self.latest_version,
             "update_available": self.update_available,
+            "version_check_status": self.version_check_status,
         }
 
     def get_dashboard_html(self) -> str:
@@ -995,6 +1002,31 @@ class smtp2mqttHandler:
             color: var(--accent-primary);
             border: 1px solid rgba(126, 193, 39, 0.25);
         }
+        .update-badge.pending-badge {
+            background-color: rgba(255, 255, 255, 0.04);
+            color: var(--text-muted);
+            border: 1px solid var(--border-color);
+        }
+        .update-badge.failed-badge {
+            background-color: rgba(239, 68, 68, 0.04);
+            color: rgba(239, 68, 68, 0.85);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            cursor: help;
+        }
+        .update-pulse-gray {
+            width: 6px;
+            height: 6px;
+            background-color: var(--text-muted);
+            border-radius: 50%;
+            box-shadow: 0 0 6px var(--text-muted);
+            margin-right: 6px;
+            animation: pulse-gray 2s infinite;
+        }
+        @keyframes pulse-gray {
+            0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.2); }
+            70% { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+        }
         .update-pulse {
             width: 6px;
             height: 6px;
@@ -1019,7 +1051,7 @@ class smtp2mqttHandler:
                 <div>
                     <h1 style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
                         smtp2mqtt Gateway
-                        <span class="version-tag" id="version-tag" style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); padding: 0.15rem 0.5rem; border-radius: 4px; font-family: 'Share Tech Mono', monospace; text-shadow: none; letter-spacing: normal; display: inline-block;">v1.7.0</span>
+                        <span class="version-tag" id="version-tag" style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); padding: 0.15rem 0.5rem; border-radius: 4px; font-family: 'Share Tech Mono', monospace; text-shadow: none; letter-spacing: normal; display: inline-block;">v1.6.0</span>
                         <span id="update-badge-container" style="display: inline-block;"></span>
                     </h1>
                     <p>Asynchronous SMTP-to-MQTT Trigger Converter</p>
@@ -1153,17 +1185,31 @@ class smtp2mqttHandler:
                 }
                 const updateBadgeContainer = document.getElementById('update-badge-container');
                 if (updateBadgeContainer) {
-                    if (data.update_available && data.latest_version) {
+                    const status = data.version_check_status || 'pending';
+                    if (status === 'pending' || status === 'checking') {
                         updateBadgeContainer.innerHTML = `
-                            <a href="https://github.com/onhala/smtp2mqtt/releases/latest" target="_blank" class="update-badge warning">
-                                <span class="update-pulse"></span>
-                                Update Available: v${data.latest_version}
-                            </a>`;
-                    } else if (data.latest_version && !data.update_available) {
+                            <span class="update-badge pending-badge">
+                                <span class="update-pulse-gray"></span>
+                                Checking updates...
+                            </span>`;
+                    } else if (status === 'success') {
+                        if (data.update_available && data.latest_version) {
+                            updateBadgeContainer.innerHTML = `
+                                <a href="https://github.com/onhala/smtp2mqtt/releases/latest" target="_blank" class="update-badge warning">
+                                    <span class="update-pulse"></span>
+                                    Update Available: v${data.latest_version}
+                                </a>`;
+                        } else {
+                            updateBadgeContainer.innerHTML = `
+                                <span class="update-badge success-badge">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 4px; display: inline-block; vertical-align: middle;"><polyline points="20 6 9 17 4 12"/></svg>
+                                    Up to date
+                                </span>`;
+                        }
+                    } else if (status === 'failed') {
                         updateBadgeContainer.innerHTML = `
-                            <span class="update-badge success-badge">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 4px; display: inline-block; vertical-align: middle;"><polyline points="20 6 9 17 4 12"/></svg>
-                                Up to date
+                            <span class="update-badge failed-badge" title="Failed to check for updates. GitHub API may be rate-limited or offline.">
+                                Update check failed
                             </span>`;
                     } else {
                         updateBadgeContainer.innerHTML = '';

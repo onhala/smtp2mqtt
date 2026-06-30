@@ -1856,11 +1856,12 @@ async def test_perform_version_check_no_update():
     loop = mock.MagicMock()
     handler = smtp2mqtt.smtp2mqttHandler(loop)
     
-    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.7.0") as mock_fetch:
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.6.0") as mock_fetch:
         await handler.perform_version_check()
         mock_fetch.assert_called_once()
-        assert handler.latest_version == "v1.7.0"
+        assert handler.latest_version == "v1.6.0"
         assert handler.update_available is False
+        assert handler.version_check_status == "success"
 
 
 @pytest.mark.asyncio
@@ -1875,6 +1876,27 @@ async def test_perform_version_check_exception_safety():
         await handler.perform_version_check()
         assert handler.latest_version is None
         assert handler.update_available is False
+        assert handler.version_check_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_version_check_status_transitions():
+    """Verify state transitions of version_check_status."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # On initialization, it should be pending
+    assert handler.version_check_status == "pending"
+    
+    # Success path
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.6.0"):
+        await handler.perform_version_check()
+        assert handler.version_check_status == "success"
+        
+    # Failure path (e.g. returns None or throws)
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value=None):
+        await handler.perform_version_check()
+        assert handler.version_check_status == "failed"
 
 
 def test_mqtt_connect_callbacks():

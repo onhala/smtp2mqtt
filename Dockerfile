@@ -5,9 +5,9 @@ FROM python:3.13-slim
 ENV PYTHONUNBUFFERED=1
 
 # Version and metadata labels for Portainer/Docker
-ENV VERSION=1.7.0
-LABEL version="1.7.0"
-LABEL org.opencontainers.image.version="1.7.0"
+ENV VERSION=1.6.0
+LABEL version="1.6.0"
+LABEL org.opencontainers.image.version="1.6.0"
 LABEL org.opencontainers.image.source="https://github.com/onhala/smtp2mqtt"
 
 WORKDIR /app
