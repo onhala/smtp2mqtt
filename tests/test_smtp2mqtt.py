@@ -1877,3 +1877,28 @@ async def test_perform_version_check_exception_safety():
         assert handler.update_available is False
 
 
+def test_mqtt_connect_callbacks():
+    """Verify persistent MQTT client connection callback behaviors."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Happy path: connection successful (rc = 0)
+    handler._on_mqtt_connect(None, None, {}, 0)
+    assert handler.mqtt_connected_status is True
+    
+    # Error path: connection failed (rc != 0)
+    handler._on_mqtt_connect(None, None, {}, 5)
+    assert handler.mqtt_connected_status is False
+
+
+def test_mqtt_disconnect_callbacks():
+    """Verify persistent MQTT client disconnection callback behaviors."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Simulate a disconnection callback
+    handler._on_mqtt_disconnect(None, None, None, 1)
+    assert handler.mqtt_connected_status is False
+
+
+

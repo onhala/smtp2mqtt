@@ -77,8 +77,12 @@ To prevent disk space exhaustion (especially when running in Docker or on lightw
 ## 📊 Web Dashboard & Integrations
 
 The gateway features a built-in, lightweight async HTTP server. When `ENABLE_WEB=True` (enabled by default), you can access:
-- **Status Dashboard (`http://localhost:8080/`)**: A premium dark-mode dashboard showing uptime, message count, connection statuses for the MQTT broker and SMTP monitor, and a real-time log of recent email triggers and publish actions.
-- **JSON Status API (`http://localhost:8080/api`)**: Returns dynamic status JSON including helper fields tailored for external dashboards.
+- **Status Dashboard (`http://localhost:8080/`)**: A premium, real-time dark-mode dashboard showing:
+  - Dynamic uptime tracking and processed messages counts.
+  - Live connection status indicators for both the MQTT broker and SMTP server.
+  - A secure, XSS-protected real-time log of recent email triggers and publish actions.
+  - **Container Versioning & Update Checker**: Instantly displays the currently running version of the container alongside a live, asynchronous GitHub integration checker that queries the GitHub Releases API to notify you in real-time when a newer image version is available.
+- **JSON Status API (`http://localhost:8080/api`)**: Returns dynamic status JSON including running version info, the latest available version on GitHub, and update availability status, alongside helper fields tailored for external dashboards (such as `gethomepage.dev`).
 
 ---
 
@@ -217,14 +221,9 @@ Please refer to the [deploy/README.md](deploy/README.md) for step-by-step config
 ---
 
 
-### Maintenance & Housekeeping
+### 🧹 Fully Automated Maintenance
 
-If you are saving attachments, you can set up a simple cron job to clean up older snapshots periodically:
-
-```bash
-# Deletes snapshot files older than 20 days inside the container
-docker exec smtp2mqtt find attachments -type f -ctime +20 -delete
-```
+With the native [Automatic File & Log Cleanup](#-automatic-file--log-cleanup) built directly into the core engine of `smtp2mqtt`, manual maintenance and host-level cron jobs are completely redundant. The container automatically manages its disk space on a configurable, asynchronous background schedule.
 
 ---
 
