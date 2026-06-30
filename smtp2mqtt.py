@@ -7,6 +7,8 @@ import os
 import signal
 import socket
 import sys
+import urllib.request
+import urllib.error
 from datetime import datetime
 from email.policy import default
 from typing import Any, Dict, List, Optional, Union
@@ -80,6 +82,9 @@ if os.path.exists("log"):
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
+VERSION = "1.6.0"
+
+
 class smtp2mqttHandler:
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
@@ -93,6 +98,8 @@ class smtp2mqttHandler:
         self.last_publish_success: Optional[bool] = None
         self.last_publish_time: Optional[str] = None
         self.recent_actions: List[Dict[str, Any]] = []  # List of dicts
+        self.latest_version: Optional[str] = None
+        self.update_available: bool = False
         
         # MQTT Broker connection monitoring
         self.mqtt_connected_status: Optional[bool] = None
@@ -137,6 +144,14 @@ class smtp2mqttHandler:
             coro_cleanup.close()
         else:
             self.cleanup_task = self.loop.create_task(coro_cleanup)
+            
+        # Periodic version and updates checker task
+        coro_update = self.check_version_updates_loop()
+        if type(loop).__name__ in ("MagicMock", "Mock", "AsyncMock"):
+            self.update_check_task = None
+            coro_update.close()
+        else:
+            self.update_check_task = self.loop.create_task(coro_update)
         
         if config["SAVE_ATTACHMENTS"]:
             log.info("Configured to save attachments to 'attachments' directory")
@@ -358,6 +373,8 @@ class smtp2mqttHandler:
             self.monitor_smtp_task.cancel()
         if hasattr(self, "cleanup_task") and self.cleanup_task and not self.cleanup_task.done():
             self.cleanup_task.cancel()
+        if hasattr(self, "update_check_task") and self.update_check_task and not self.update_check_task.done():
+            self.update_check_task.cancel()
         
         # Cancel any active background attachment tasks
         if hasattr(self, "background_tasks") and self.background_tasks:
@@ -439,6 +456,73 @@ class smtp2mqttHandler:
                 log.info("Directory cleanup of '%s' completed: deleted %d files older than %d days", directory, deleted_count, max_age_days)
         except Exception as scan_error:
             log.error("Failed to scan directory '%s' for cleanup: %s", directory, scan_error)
+
+    async def check_version_updates_loop(self) -> None:
+        """Periodically checks GitHub API for newer container versions."""
+        # Initial safety delay to ensure startup is unblocked and fast
+        await asyncio.sleep(2)
+        log.info("Starting periodic version check task (interval: 24h)")
+        try:
+            while True:
+                await self.perform_version_check()
+                # Sleep for 24 hours (86400 seconds)
+                await asyncio.sleep(86400)
+        except asyncio.CancelledError:
+            log.info("Periodic version check task cancelled.")
+        except Exception as e:
+            log.exception("Unexpected error in periodic version check loop: %s", e)
+
+    async def perform_version_check(self) -> None:
+        """Queries GitHub for the latest version and compares it to the local version."""
+        try:
+            latest = await asyncio.to_thread(self._fetch_latest_release_from_github)
+            if latest:
+                self.latest_version = latest
+                self.update_available = self._is_update_available(VERSION, latest)
+                if self.update_available:
+                    log.info("Newer version available on GitHub: %s (current: %s)", latest, VERSION)
+                else:
+                    log.info("smtp2mqtt is up to date (current: %s, latest: %s)", VERSION, latest)
+        except Exception as e:
+            log.error("Failed to perform version check: %s", e)
+
+    def _fetch_latest_release_from_github(self) -> Optional[str]:
+        """Queries the GitHub Releases API to fetch the latest tag_name."""
+        url = "https://api.github.com/repos/onhala/smtp2mqtt/releases/latest"
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": f"smtp2mqtt-gateway/{VERSION}"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode('utf-8'))
+                    return data.get("tag_name")
+        except urllib.error.HTTPError as e:
+            log.warning("GitHub Releases API returned status %d. Cached latest_version remains %s", e.code, self.latest_version)
+        except Exception as e:
+            log.warning("Failed to connect to GitHub Releases API: %s. Cached latest_version remains %s", e, self.latest_version)
+        return None
+
+    def _is_update_available(self, current: str, latest: Optional[str]) -> bool:
+        """Compares current and latest version semver strings to check if an update is available."""
+        if not latest:
+            return False
+        curr_clean = current.strip().lower().lstrip('v')
+        lat_clean = latest.strip().lower().lstrip('v')
+        
+        if curr_clean == lat_clean:
+            return False
+            
+        try:
+            curr_parts = [int(x) for x in curr_clean.split('.')]
+            lat_parts = [int(x) for x in lat_clean.split('.')]
+            max_len = max(len(curr_parts), len(lat_parts))
+            curr_parts += [0] * (max_len - len(curr_parts))
+            lat_parts += [0] * (max_len - len(lat_parts))
+            return lat_parts > curr_parts
+        except ValueError:
+            return lat_clean > curr_clean
 
     async def monitor_mqtt_broker(self) -> None:
         """Periodically checks connection to the MQTT broker and logs status changes."""
@@ -565,6 +649,9 @@ class smtp2mqttHandler:
             "uptime_seconds": uptime,
             "uptime_formatted": uptime_formatted,
             "recent_actions": self.recent_actions,
+            "version": VERSION,
+            "latest_version": self.latest_version,
+            "update_available": self.update_available,
         }
 
     def get_dashboard_html(self) -> str:
@@ -880,8 +967,47 @@ class smtp2mqttHandler:
         .attachment-link {
             transition: color 0.2s;
         }
-        .attachment-item:hover .attachment-link {
-            color: var(--accent-hover);
+        .update-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.625rem;
+            border-radius: 6px;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-decoration: none;
+            letter-spacing: 0.02em;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .update-badge.warning {
+            background-color: rgba(240, 136, 62, 0.12);
+            color: var(--system-color);
+            border: 1px solid rgba(240, 136, 62, 0.4);
+            box-shadow: 0 0 10px rgba(240, 136, 62, 0.05);
+        }
+        .update-badge.warning:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 0 15px rgba(240, 136, 62, 0.2);
+            background-color: rgba(240, 136, 62, 0.18);
+        }
+        .update-badge.success-badge {
+            background-color: rgba(126, 193, 39, 0.08);
+            color: var(--accent-primary);
+            border: 1px solid rgba(126, 193, 39, 0.25);
+        }
+        .update-pulse {
+            width: 6px;
+            height: 6px;
+            background-color: var(--system-color);
+            border-radius: 50%;
+            box-shadow: 0 0 6px var(--system-color);
+            margin-right: 6px;
+            animation: pulse-orange 2s infinite;
+        }
+        @keyframes pulse-orange {
+            0% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0.6); }
+            70% { box-shadow: 0 0 0 6px rgba(240, 136, 62, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0); }
         }
     </style>
 </head>
@@ -891,7 +1017,11 @@ class smtp2mqttHandler:
             <div class="title-area" style="display: flex; align-items: center; gap: 1.25rem;">
                 <img src="/logo.svg" alt="logo" style="width: 52px; height: 52px; display: block; filter: drop-shadow(0 0 10px rgba(126, 193, 39, 0.4));" />
                 <div>
-                    <h1>smtp2mqtt Gateway</h1>
+                    <h1 style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                        smtp2mqtt Gateway
+                        <span class="version-tag" id="version-tag" style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); padding: 0.15rem 0.5rem; border-radius: 4px; font-family: 'Share Tech Mono', monospace; text-shadow: none; letter-spacing: normal; display: inline-block;">v1.6.0</span>
+                        <span id="update-badge-container" style="display: inline-block;"></span>
+                    </h1>
                     <p>Asynchronous SMTP-to-MQTT Trigger Converter</p>
                 </div>
             </div>
@@ -1016,6 +1146,29 @@ class smtp2mqttHandler:
                 document.getElementById('last-publish-time').innerText = data.last_publish_time || 'Never';
                 document.getElementById('mqtt-broker-info').innerText = `${data.mqtt_host}:${data.mqtt_port}`;
                 document.getElementById('smtp-port-info').innerText = data.smtp_port || '-';
+                
+                const versionTag = document.getElementById('version-tag');
+                if (versionTag && data.version) {
+                    versionTag.innerText = `v${data.version}`;
+                }
+                const updateBadgeContainer = document.getElementById('update-badge-container');
+                if (updateBadgeContainer) {
+                    if (data.update_available && data.latest_version) {
+                        updateBadgeContainer.innerHTML = `
+                            <a href="https://github.com/onhala/smtp2mqtt/releases/latest" target="_blank" class="update-badge warning">
+                                <span class="update-pulse"></span>
+                                Update Available: v${data.latest_version}
+                            </a>`;
+                    } else if (data.latest_version && !data.update_available) {
+                        updateBadgeContainer.innerHTML = `
+                            <span class="update-badge success-badge">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 4px; display: inline-block; vertical-align: middle;"><polyline points="20 6 9 17 4 12"/></svg>
+                                Up to date
+                            </span>`;
+                    } else {
+                        updateBadgeContainer.innerHTML = '';
+                    }
+                }
                 
                 const mqttStatusBadge = document.getElementById('mqtt-status');
                 if (data.mqtt_connected) {

@@ -1739,3 +1739,141 @@ async def test_smtp2mqtt_handler_periodic_cleanup(tmp_path, monkeypatch):
     
     handler.cancel_all_resets()
 
+
+def test_is_update_available():
+    """Verify that _is_update_available correctly compares semver versions."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Case 1: latest is None or empty
+    assert not handler._is_update_available("1.6.0", None)
+    assert not handler._is_update_available("1.6.0", "")
+    
+    # Case 2: equal versions (including leading v / V and whitespaces)
+    assert not handler._is_update_available("1.6.0", "1.6.0")
+    assert not handler._is_update_available("1.6.0", "v1.6.0")
+    assert not handler._is_update_available("v1.6.0", "  v1.6.0  ")
+    assert not handler._is_update_available("1.6.0", "V1.6.0")
+    
+    # Case 3: older latest version
+    assert not handler._is_update_available("1.6.0", "1.5.9")
+    assert not handler._is_update_available("1.6.0", "v1.5.0")
+    
+    # Case 4: newer latest version
+    assert handler._is_update_available("1.6.0", "1.6.1")
+    assert handler._is_update_available("1.6.0", "v1.7.0")
+    assert handler._is_update_available("1.6.0", "2.0.0")
+    
+    # Case 5: longer/shorter semver padding (e.g. 1.6.0 vs 1.6)
+    assert not handler._is_update_available("1.6.0", "1.6")
+    assert handler._is_update_available("1.6", "1.6.1")
+    
+    # Case 6: non-numeric comparison fallback (ValueError)
+    assert handler._is_update_available("1.6.0a", "1.6.0b")
+    assert not handler._is_update_available("1.6.0b", "1.6.0a")
+
+
+def test_fetch_latest_release_from_github_success():
+    """Verify successful fetch of latest version from GitHub API."""
+    import urllib.request
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    mock_response = mock.MagicMock()
+    mock_response.status = 200
+    mock_response.read.return_value = json.dumps({"tag_name": "v1.7.2"}).encode('utf-8')
+    
+    with mock.patch("urllib.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+        
+        result = handler._fetch_latest_release_from_github()
+        assert result == "v1.7.2"
+        
+        # Verify correct User-Agent and Request details
+        mock_urlopen.assert_called_once()
+        req_arg = mock_urlopen.call_args[0][0]
+        assert isinstance(req_arg, urllib.request.Request)
+        assert req_arg.full_url == "https://api.github.com/repos/onhala/smtp2mqtt/releases/latest"
+        assert req_arg.headers["User-agent"] == f"smtp2mqtt-gateway/{smtp2mqtt.VERSION}"
+
+
+def test_fetch_latest_release_from_github_http_error():
+    """Verify GitHub fetch gracefully handles HTTP errors (e.g. 403, 404)."""
+    import urllib.error
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    with mock.patch("urllib.request.urlopen") as mock_urlopen:
+        # Create an HTTPError
+        fp = mock.MagicMock()
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://api.github.com/repos/onhala/smtp2mqtt/releases/latest",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=fp
+        )
+        
+        result = handler._fetch_latest_release_from_github()
+        assert result is None
+
+
+def test_fetch_latest_release_from_github_generic_exception():
+    """Verify GitHub fetch gracefully handles generic connection failures."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    with mock.patch("urllib.request.urlopen") as mock_urlopen:
+        mock_urlopen.side_effect = Exception("Connection timed out")
+        
+        result = handler._fetch_latest_release_from_github()
+        assert result is None
+
+
+@pytest.mark.asyncio
+async def test_perform_version_check_updates_state():
+    """Verify that perform_version_check executes task, updates local fields, and logs results."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # We will patch _fetch_latest_release_from_github to return a newer version
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.7.0") as mock_fetch:
+        await handler.perform_version_check()
+        mock_fetch.assert_called_once()
+        assert handler.latest_version == "v1.7.0"
+        assert handler.update_available is True
+        
+        # Verify the get_status_json exposes this
+        status = handler.get_status_json()
+        assert status["version"] == smtp2mqtt.VERSION
+        assert status["latest_version"] == "v1.7.0"
+        assert status["update_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_perform_version_check_no_update():
+    """Verify version checker state when version is up to date."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.6.0") as mock_fetch:
+        await handler.perform_version_check()
+        mock_fetch.assert_called_once()
+        assert handler.latest_version == "v1.6.0"
+        assert handler.update_available is False
+
+
+@pytest.mark.asyncio
+async def test_perform_version_check_exception_safety():
+    """Verify perform_version_check is safe against exceptions."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Simulate exception inside the background thread
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", side_effect=Exception("API failure")):
+        # Should not raise exception
+        await handler.perform_version_check()
+        assert handler.latest_version is None
+        assert handler.update_available is False
+
+
