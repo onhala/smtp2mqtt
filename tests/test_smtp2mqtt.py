@@ -1680,3 +1680,62 @@ def test_main_entrypoint_unhandled_exception(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         runpy.run_path("smtp2mqtt.py", run_name="__main__")
     assert excinfo.value.code == 1
+
+
+@pytest.mark.asyncio
+async def test_smtp2mqtt_handler_periodic_cleanup(tmp_path, monkeypatch):
+    """Verify that _cleanup_directory deletes old files and keeps new ones."""
+    import time
+    loop = asyncio.get_running_loop()
+    
+    # Create temp directory layout
+    temp_dir = tmp_path / "test_cleanup"
+    temp_dir.mkdir()
+    
+    # Create old file (mtime set to 40 days ago)
+    old_file = temp_dir / "old_image.jpg"
+    old_file.write_text("old content")
+    old_file_mtime = time.time() - (40 * 86400)
+    os.utime(str(old_file), (old_file_mtime, old_file_mtime))
+    
+    # Create new file (mtime set to now)
+    new_file = temp_dir / "new_image.jpg"
+    new_file.write_text("new content")
+    
+    # Create hidden file (mtime set to 40 days ago - should be skipped)
+    hidden_file = temp_dir / ".gitkeep"
+    hidden_file.write_text("keep me")
+    hidden_file_mtime = time.time() - (40 * 86400)
+    os.utime(str(hidden_file), (hidden_file_mtime, hidden_file_mtime))
+
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    # Run _cleanup_directory on our temp directory with max_age_days = 30
+    await asyncio.to_thread(handler._cleanup_directory, str(temp_dir), 30)
+    
+    # Assert old file is deleted
+    assert not old_file.exists()
+    
+    # Assert new file is preserved
+    assert new_file.exists()
+    
+    # Assert hidden file is preserved (not deleted despite being old)
+    assert hidden_file.exists()
+    
+    # Test perform_cleanup with custom directories
+    monkeypatch.setitem(smtp2mqtt.config, "SAVE_ATTACHMENTS", True)
+    monkeypatch.setitem(smtp2mqtt.config, "CLEANUP_ATTACHMENTS_DAYS", 15)
+    monkeypatch.setitem(smtp2mqtt.config, "CLEANUP_LOGS_DAYS", 15)
+    
+    cleaned_dirs = []
+    def mock_cleanup_directory(directory, max_age_days):
+        cleaned_dirs.append((directory, max_age_days))
+        
+    monkeypatch.setattr(handler, "_cleanup_directory", mock_cleanup_directory)
+    
+    await handler.perform_cleanup()
+    assert ("attachments", 15) in cleaned_dirs
+    assert ("log", 15) in cleaned_dirs
+    
+    handler.cancel_all_resets()
+

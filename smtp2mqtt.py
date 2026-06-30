@@ -30,6 +30,9 @@ defaults: Dict[str, Union[str, int]] = {
     "DEBUG": "False",
     "ENABLE_WEB": "True",
     "WEB_PORT": "8080",
+    "CLEANUP_ATTACHMENTS_DAYS": "30",
+    "CLEANUP_LOGS_DAYS": "30",
+    "CLEANUP_INTERVAL_SECONDS": "86400",
 }
 
 def parse_bool(value: Any) -> bool:
@@ -47,7 +50,7 @@ for setting, default_val in defaults.items():
     env_val = os.environ.get(setting, default_val)
     if setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB"):
         config[setting] = parse_bool(env_val)
-    elif setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT"):
+    elif setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANUP_ATTACHMENTS_DAYS", "CLEANUP_LOGS_DAYS", "CLEANUP_INTERVAL_SECONDS"):
         try:
             config[setting] = int(env_val)
         except ValueError:
@@ -126,6 +129,14 @@ class smtp2mqttHandler:
             coro_smtp.close()
         else:
             self.monitor_smtp_task = self.loop.create_task(coro_smtp)
+        
+        # Periodic file and log cleanup task
+        coro_cleanup = self.run_periodic_cleanup()
+        if type(loop).__name__ in ("MagicMock", "Mock", "AsyncMock"):
+            self.cleanup_task = None
+            coro_cleanup.close()
+        else:
+            self.cleanup_task = self.loop.create_task(coro_cleanup)
         
         if config["SAVE_ATTACHMENTS"]:
             log.info("Configured to save attachments to 'attachments' directory")
@@ -345,6 +356,8 @@ class smtp2mqttHandler:
             self.monitor_task.cancel()
         if hasattr(self, "monitor_smtp_task") and self.monitor_smtp_task and not self.monitor_smtp_task.done():
             self.monitor_smtp_task.cancel()
+        if hasattr(self, "cleanup_task") and self.cleanup_task and not self.cleanup_task.done():
+            self.cleanup_task.cancel()
         
         # Cancel any active background attachment tasks
         if hasattr(self, "background_tasks") and self.background_tasks:
@@ -368,6 +381,64 @@ class smtp2mqttHandler:
         for topic, handle in list(self.handles.items()):
             handle.cancel()
         self.handles.clear()
+
+    async def run_periodic_cleanup(self) -> None:
+        """Periodically scans and cleans up old attachments and log files."""
+        interval = config["CLEANUP_INTERVAL_SECONDS"]
+        log.info("Starting periodic file cleanup task (interval: %d seconds)", interval)
+        try:
+            while True:
+                await self.perform_cleanup()
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            log.info("Periodic file cleanup task cancelled.")
+        except Exception as e:
+            log.exception("Unexpected error in periodic cleanup loop: %s", e)
+
+    async def perform_cleanup(self) -> None:
+        """Deletes files in attachments and log directories that exceed configuration thresholds."""
+        attachments_days = config["CLEANUP_ATTACHMENTS_DAYS"]
+        logs_days = config["CLEANUP_LOGS_DAYS"]
+
+        log.debug("Initiating automatic directory cleanup check...")
+        
+        # Cleanup attachments folder
+        if config["SAVE_ATTACHMENTS"] and attachments_days > 0:
+            await asyncio.to_thread(self._cleanup_directory, "attachments", attachments_days)
+
+        # Cleanup log folder
+        if logs_days > 0:
+            await asyncio.to_thread(self._cleanup_directory, "log", logs_days)
+
+    def _cleanup_directory(self, directory: str, max_age_days: int) -> None:
+        """Safely scans a directory and deletes files older than max_age_days."""
+        import time
+        if not os.path.exists(directory) or not os.path.isdir(directory):
+            return
+
+        now = time.time()
+        cutoff_timestamp = now - (max_age_days * 86400)
+        deleted_count = 0
+
+        try:
+            for filename in os.listdir(directory):
+                # Avoid deleting .gitkeep or other hidden system files
+                if filename.startswith("."):
+                    continue
+                file_path = os.path.join(directory, filename)
+                if os.path.isfile(file_path):
+                    mtime = os.path.getmtime(file_path)
+                    if mtime < cutoff_timestamp:
+                        try:
+                            os.remove(file_path)
+                            deleted_count += 1
+                            log.debug("Deleted old file: %s", file_path)
+                        except Exception as delete_error:
+                            log.error("Failed to delete %s: %s", file_path, delete_error)
+            if deleted_count > 0:
+                log.info("Directory cleanup of '%s' completed: deleted %d files older than %d days", directory, deleted_count, max_age_days)
+        except Exception as scan_error:
+            log.error("Failed to scan directory '%s' for cleanup: %s", directory, scan_error)
 
     async def monitor_mqtt_broker(self) -> None:
         """Periodically checks connection to the MQTT broker and logs status changes."""

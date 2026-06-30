@@ -54,9 +54,23 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 | `MQTT_RESET_PAYLOAD` | Payload published when the reset timer expires | `OFF` |
 | `SAVE_ATTACHMENTS` | Whether to extract and save attached image snapshots | `False` |
 | `SAVE_ATTACHMENTS_DURING_RESET_TIME` | Save images from emails arriving while reset timer is active | `False` |
+| `CLEANUP_ATTACHMENTS_DAYS` | Automatically delete saved attachments older than N days (`0` to disable) | `30` |
+| `CLEANUP_LOGS_DAYS` | Automatically delete rotated log files older than N days (`0` to disable) | `30` |
+| `CLEANUP_INTERVAL_SECONDS` | Interval in seconds between automatic cleanup execution loops | `86400` |
 | `ENABLE_WEB` | Enable the built-in zero-dependency HTTP server for stats/dashboard | `True` |
 | `WEB_PORT` | Port the built-in HTTP server listens on | `8080` |
 | `DEBUG` | Enable verbose debug logging | `False` |
+
+---
+
+### 🧹 Automatic File & Log Cleanup
+
+To prevent disk space exhaustion (especially when running in Docker or on lightweight systems like Loxberry), `smtp2mqtt` includes a built-in, asynchronous background cleanup process. It periodically scans target directories and securely removes files exceeding the retention threshold without blocking email processing:
+
+- **Attachments Retention**: Controlled by `CLEANUP_ATTACHMENTS_DAYS` (default: `30` days). Saved attachments older than this limit are pruned.
+- **Logs Retention**: Controlled by `CLEANUP_LOGS_DAYS` (default: `30` days). Rotated log files older than this limit are pruned.
+- **Safety Guards**: Hidden system files and tracking files (such as `.gitkeep`) are automatically ignored to preserve repository and workspace configuration.
+- **Interval**: Runs asynchronously on container startup and repeats every `CLEANUP_INTERVAL_SECONDS` (default: `86400` seconds / 24 hours).
 
 ---
 
