@@ -1837,16 +1837,16 @@ async def test_perform_version_check_updates_state():
     handler = smtp2mqtt.smtp2mqttHandler(loop)
     
     # We will patch _fetch_latest_release_from_github to return a newer version
-    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.7.0") as mock_fetch:
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.8.0") as mock_fetch:
         await handler.perform_version_check()
         mock_fetch.assert_called_once()
-        assert handler.latest_version == "v1.7.0"
+        assert handler.latest_version == "v1.8.0"
         assert handler.update_available is True
         
         # Verify the get_status_json exposes this
         status = handler.get_status_json()
         assert status["version"] == smtp2mqtt.VERSION
-        assert status["latest_version"] == "v1.7.0"
+        assert status["latest_version"] == "v1.8.0"
         assert status["update_available"] is True
 
 
@@ -1856,10 +1856,10 @@ async def test_perform_version_check_no_update():
     loop = mock.MagicMock()
     handler = smtp2mqtt.smtp2mqttHandler(loop)
     
-    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.6.0") as mock_fetch:
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v1.7.0") as mock_fetch:
         await handler.perform_version_check()
         mock_fetch.assert_called_once()
-        assert handler.latest_version == "v1.6.0"
+        assert handler.latest_version == "v1.7.0"
         assert handler.update_available is False
 
 

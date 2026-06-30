@@ -82,7 +82,7 @@ if os.path.exists("log"):
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 
 class smtp2mqttHandler:
@@ -1019,7 +1019,7 @@ class smtp2mqttHandler:
                 <div>
                     <h1 style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
                         smtp2mqtt Gateway
-                        <span class="version-tag" id="version-tag" style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); padding: 0.15rem 0.5rem; border-radius: 4px; font-family: 'Share Tech Mono', monospace; text-shadow: none; letter-spacing: normal; display: inline-block;">v1.6.0</span>
+                        <span class="version-tag" id="version-tag" style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); padding: 0.15rem 0.5rem; border-radius: 4px; font-family: 'Share Tech Mono', monospace; text-shadow: none; letter-spacing: normal; display: inline-block;">v1.7.0</span>
                         <span id="update-badge-container" style="display: inline-block;"></span>
                     </h1>
                     <p>Asynchronous SMTP-to-MQTT Trigger Converter</p>
