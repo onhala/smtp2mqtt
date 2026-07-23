@@ -69,8 +69,8 @@ if (file_exists($lb_mqtt_file)) {
 // Handle Log & Daemon Actions (Start / Stop / Restart / Download / Clear)
 if (isset($_GET['action'])) {
     if ($_GET['action'] === 'restart_daemon') {
-        exec("pkill -f smtp2mqtt.py 2>&1");
-        sleep(1);
+        exec("pkill -9 -f smtp2mqtt.py 2>&1");
+        sleep(2);
         exec("nohup python3 " . escapeshellarg($daemon_script) . " > /dev/null 2>&1 &");
         header('Location: index.php?tab=logs&started=1');
         exit;
