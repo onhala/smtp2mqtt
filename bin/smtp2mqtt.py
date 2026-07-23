@@ -2,9 +2,18 @@
 import sys
 import os
 import glob
+import subprocess
 
-# Ensure LoxBerry site-packages paths are available in sys.path
-for site in glob.glob("/opt/loxberry/.local/lib/python3.*/site-packages") + glob.glob(os.path.expanduser("~/.local/lib/python3.*/site-packages")):
+# Robustly discover all potential site-packages / dist-packages directories on LoxBerry
+extra_paths = (
+    glob.glob("/opt/loxberry/.local/lib/python3.*/site-packages") +
+    glob.glob("/home/*/.local/lib/python3.*/site-packages") +
+    glob.glob("/root/.local/lib/python3.*/site-packages") +
+    glob.glob("/var/www/.local/lib/python3.*/site-packages") +
+    glob.glob("/usr/local/lib/python3.*/dist-packages") +
+    glob.glob(os.path.expanduser("~/.local/lib/python3.*/site-packages"))
+)
+for site in extra_paths:
     if site not in sys.path:
         sys.path.insert(0, site)
 
@@ -20,8 +29,42 @@ from datetime import datetime
 from email.policy import default
 from typing import Any, Dict, List, Optional, Union
 
-from aiosmtpd.controller import UnthreadedController
-from paho.mqtt import client as mqtt, publish
+try:
+    from aiosmtpd.controller import UnthreadedController
+    from paho.mqtt import client as mqtt, publish
+except ModuleNotFoundError as err:
+    sys.stderr.write(f"Missing module: {err}. Attempting auto-install of dependencies...\n")
+    packages = ["aiosmtpd", "paho-mqtt", "aiomqtt", "pillow"]
+    installed = False
+    for pip_args in [
+        [sys.executable, "-m", "pip", "install", "--break-system-packages", "--user"] + packages,
+        [sys.executable, "-m", "pip", "install", "--break-system-packages"] + packages,
+        ["pip3", "install", "--user", "--break-system-packages"] + packages,
+        ["pip3", "install", "--break-system-packages"] + packages,
+    ]:
+        try:
+            res = subprocess.run(pip_args, capture_output=True, text=True)
+            if res.returncode == 0:
+                installed = True
+                break
+        except Exception:
+            pass
+
+    # Re-scan site-packages after install
+    extra_paths = (
+        glob.glob("/opt/loxberry/.local/lib/python3.*/site-packages") +
+        glob.glob("/home/*/.local/lib/python3.*/site-packages") +
+        glob.glob("/root/.local/lib/python3.*/site-packages") +
+        glob.glob("/var/www/.local/lib/python3.*/site-packages") +
+        glob.glob("/usr/local/lib/python3.*/dist-packages") +
+        glob.glob(os.path.expanduser("~/.local/lib/python3.*/site-packages"))
+    )
+    for site in extra_paths:
+        if site not in sys.path:
+            sys.path.insert(0, site)
+
+    from aiosmtpd.controller import UnthreadedController
+    from paho.mqtt import client as mqtt, publish
 
 # Default configurations
 defaults: Dict[str, Union[str, int]] = {
@@ -193,7 +236,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.7"
+VERSION = "1.8.8"
 
 
 class smtp2mqttHandler:

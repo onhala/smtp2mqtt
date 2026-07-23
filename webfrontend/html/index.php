@@ -523,7 +523,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     echo '</div>';
                 } else {
                     unset($py_err);
-                    exec("python3 -c " . escapeshellarg("import sys, site, os, glob; print('SYS_PATH:', sys.path); print('SITE_PACKAGES:', site.getsitepackages()); print('LOCATED_AIOSMTPD:', glob.glob('/usr/local/lib/python3.*/dist-packages/aiosmtpd*') + glob.glob('/usr/lib/python3/dist-packages/aiosmtpd*') + glob.glob('/opt/loxberry/.local/lib/python3.*/site-packages/aiosmtpd*') + glob.glob('/root/.local/lib/python3.*/site-packages/aiosmtpd*') + glob.glob('/var/www/.local/lib/python3.*/site-packages/aiosmtpd*'))") . " 2>&1", $py_err);
+                    exec("python3 " . escapeshellarg($daemon_script) . " 2>&1", $py_err);
                     echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 12px 16px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data.<br><br><a href="?action=restart_daemon" class="lox-btn-primary">🚀 Spustit / Restartovat Službu smtp2mqtt</a></div>';
                     if (!empty($py_err)) {
                         echo '<div class="log-viewer-box" id="log-box">';
