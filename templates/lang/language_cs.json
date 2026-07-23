@@ -55,5 +55,11 @@
     "HELP_LOXONE_TITLE": "🏠 Integrace s Loxone Config",
     "HELP_LOXONE_DESC": "V Loxone Config přidejte MQTT Text In Subscriptions pro topic smtp2mqtt/#. Příklad: smtp2mqtt/kamera_zahrada-domov_local změní hodnotu na ON při detekci pohybu a po 10 sekundách se vrátí na OFF.",
     "HELP_SEC_TITLE": "🛡️ Bezpečnostní doporučení",
-    "HELP_SEC_DESC": "Službu SMTP nikdy nevystavujte přímo do veřejného internetu bez VPN. Pro zamezení spamu v lokální síti použijte pole ALLOWED_IPS pro omezení přístupu pouze z IP adres vašich kamer."
+    "HELP_SEC_DESC": "Službu SMTP nikdy nevystavujte přímo do veřejného internetu bez VPN. Pro zamezení spamu v lokální síti použijte pole ALLOWED_IPS pro omezení přístupu pouze z IP adres vašich kamer.",
+
+    "DASH_NO_DATA": "Dashboard zatím nemá data.",
+    "DASH_NO_DATA_DESC": "Služba smtp2mqtt ještě nebyla spuštěna nebo nezapsala stavový soubor. Klikněte na 'Spustit Službu' pro aktivaci.",
+    "DASH_UPDATE_AVAILABLE": "Nová verze pluginu je dostupná!",
+    "DASH_RECENT_ACTIONS": "Poslední události",
+    "DASH_NO_EVENTS": "Zatím nebyly zaznamenány žádné události."
 }

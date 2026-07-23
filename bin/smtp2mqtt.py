@@ -239,7 +239,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.16"
+VERSION = "1.8.17"
 
 
 class smtp2mqttHandler:
@@ -336,18 +336,31 @@ class smtp2mqttHandler:
         self.recent_actions.insert(0, action)
         if len(self.recent_actions) > 20:
             self.recent_actions.pop()
+        self.save_status_file()
+
+    def save_status_file(self) -> None:
+        """Saves current status JSON to status.json on disk for PHP WebAdmin."""
+        data_dir = get_data_dir()
+        status_file = os.path.join(data_dir, "status.json")
+        try:
+            with open(status_file, "w", encoding="utf-8") as f:
+                json.dump(self.get_status_json(), f, indent=2)
+        except Exception as e:
+            log.debug("Failed to write status.json: %s", e)
 
     def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any = None) -> None:
         if rc == 0:
-            log.info("Persistent MQTT client connected successfully.")
+            log.info("Persistent MQTT client connected successfully to %s:%s", config["MQTT_HOST"], config["MQTT_PORT"])
             self.mqtt_connected_status = True
         else:
             log.error("Persistent MQTT client failed to connect: return code %s", rc)
             self.mqtt_connected_status = False
+        self.save_status_file()
 
     def _on_mqtt_disconnect(self, client: Any, userdata: Any, disconnect_flags: Any, rc: int, properties: Any = None) -> None:
         log.warning("Persistent MQTT client disconnected: return code %s", rc)
         self.mqtt_connected_status = False
+        self.save_status_file()
 
     def is_ip_allowed(self, peer_ip: Optional[str]) -> bool:
         """Verifies whether client peer_ip is permitted by ALLOWED_IPS config."""
@@ -756,6 +769,7 @@ class smtp2mqttHandler:
             except Exception as e:
                 log.error("Error in MQTT broker monitor: %s", e)
             
+            self.save_status_file()
             try:
                 await asyncio.sleep(10)  # Check every 10 seconds
             except asyncio.CancelledError:
@@ -806,6 +820,7 @@ class smtp2mqttHandler:
             except Exception as e:
                 log.error("Error in SMTP server monitor: %s", e)
             
+            self.save_status_file()
             try:
                 await asyncio.sleep(10)  # Check every 10 seconds
             except asyncio.CancelledError:

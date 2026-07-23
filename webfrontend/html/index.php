@@ -177,7 +177,7 @@ if (!empty($pgrep_out)) {
 }
 
 // Output LoxBerry Header
-LBWeb::lbheader("smtp2mqtt Bridge", "https://github.com/onhala/smtp2mqtt", "smtp2mqtt");
+LBWeb::lbheader("smtp2mqtt Bridge", "http://" . $_SERVER['HTTP_HOST'] . "/admin/plugins/smtp2mqtt/?tab=help", "smtp2mqtt");
 
 // Determine Dashboard URL dynamically based on configured WEB_PORT with LoxBerry theme
 $port = $config['WEB_PORT'];
@@ -346,7 +346,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         <span class="lox-badge-danger">🔴 Služba Zastavena</span>
                     <?php endif; ?>
                 </div>
-                <span class="lox-badge-info">v1.8.16</span>
+                <span class="lox-badge-info">v1.8.17</span>
             </div>
             <div class="lox-card-body">
                 <form method="post" action="?tab=settings" id="config-form">
@@ -507,16 +507,152 @@ $active_tab = $_GET['tab'] ?? 'settings';
         </script>
 
     <?php elseif ($active_tab === 'dashboard'): ?>
-        <!-- Live Dashboard Tab -->
+        <?php
+        // Read status.json written by the Python daemon
+        $status_file = $lbpdatadir . "/status.json";
+        $status = null;
+        if (file_exists($status_file)) {
+            $status = json_decode(file_get_contents($status_file), true);
+        }
+        ?>
+        <!-- Live Dashboard Tab (Native) -->
         <div class="lox-card">
             <div class="lox-card-header">
                 <h3 class="lox-card-title"><?php echo htmlspecialchars($L['TAB_DASHBOARD'] ?? '📊 Živý Dashboard'); ?></h3>
-                <div style="display: flex; gap: 10px;">
-                    <a href="<?php echo $dashboard_url; ?>" target="_blank" class="lox-btn-secondary">Otevřít samostatně ↗</a>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <span id="dash-last-update" style="font-size: 0.82rem; color: #64748b;"></span>
+                    <a href="?tab=dashboard" class="lox-btn-secondary">🔄 <?php echo htmlspecialchars($L['BTN_REFRESH'] ?? 'Obnovit'); ?></a>
                 </div>
             </div>
-            <iframe src="<?php echo $dashboard_url; ?>" style="width: 100%; height: 750px; border: none; background: #ffffff;"></iframe>
+            <div class="lox-card-body">
+                <?php if (!$status): ?>
+                    <div style="padding: 20px; text-align: center; color: #64748b;">
+                        <p style="font-size: 1.1rem; font-weight: 600;">⏳ <?php echo htmlspecialchars($L['DASH_NO_DATA'] ?? 'Dashboard zatím nemá data.'); ?></p>
+                        <p><?php echo htmlspecialchars($L['DASH_NO_DATA_DESC'] ?? 'Služba smtp2mqtt ještě nebyla spuštěna nebo nezapsala stavový soubor.'); ?></p>
+                        <a href="?action=restart_daemon" class="lox-btn-primary" style="margin-top: 12px; display: inline-block;">🚀 <?php echo htmlspecialchars($L['BTN_RESTART_DAEMON'] ?? 'Spustit Službu'); ?></a>
+                    </div>
+                <?php else: ?>
+                    <!-- Status Cards Grid -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                        <!-- SMTP Status -->
+                        <div style="background: <?php echo ($status['smtp_connected'] ?? false) ? '#dcfce7' : '#fee2e2'; ?>; border: 1px solid <?php echo ($status['smtp_connected'] ?? false) ? '#bbf7d0' : '#fecaca'; ?>; border-radius: 8px; padding: 16px;">
+                            <div style="font-size: 0.85rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">📬 SMTP Server</div>
+                            <div style="font-size: 1.4rem; font-weight: 800; color: <?php echo ($status['smtp_connected'] ?? false) ? '#15803d' : '#b91c1c'; ?>;" id="dash-smtp-status">
+                                <?php echo ($status['smtp_connected'] ?? false) ? '🟢 Active' : '🔴 Inactive'; ?>
+                            </div>
+                            <div style="font-size: 0.82rem; color: #64748b; margin-top: 4px;">Port <?php echo htmlspecialchars($status['smtp_port'] ?? $config['SMTP_PORT']); ?></div>
+                        </div>
+                        <!-- MQTT Status -->
+                        <div style="background: <?php echo ($status['mqtt_connected'] ?? false) ? '#dcfce7' : '#fee2e2'; ?>; border: 1px solid <?php echo ($status['mqtt_connected'] ?? false) ? '#bbf7d0' : '#fecaca'; ?>; border-radius: 8px; padding: 16px;">
+                            <div style="font-size: 0.85rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">📡 MQTT Broker</div>
+                            <div style="font-size: 1.4rem; font-weight: 800; color: <?php echo ($status['mqtt_connected'] ?? false) ? '#15803d' : '#b91c1c'; ?>;" id="dash-mqtt-status">
+                                <?php echo ($status['mqtt_connected'] ?? false) ? '🟢 Connected' : '🔴 Disconnected'; ?>
+                            </div>
+                            <div style="font-size: 0.82rem; color: #64748b; margin-top: 4px;"><?php echo htmlspecialchars(($status['mqtt_host'] ?? 'localhost') . ':' . ($status['mqtt_port'] ?? '1883')); ?></div>
+                        </div>
+                        <!-- Uptime -->
+                        <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 16px;">
+                            <div style="font-size: 0.85rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">⏱️ Uptime</div>
+                            <div style="font-size: 1.4rem; font-weight: 800; color: #0369a1;" id="dash-uptime">
+                                <?php echo htmlspecialchars($status['uptime_formatted'] ?? '—'); ?>
+                            </div>
+                            <div style="font-size: 0.82rem; color: #64748b; margin-top: 4px;">v<?php echo htmlspecialchars($status['version'] ?? VERSION); ?></div>
+                        </div>
+                        <!-- Messages Processed -->
+                        <div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 16px;">
+                            <div style="font-size: 0.85rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">📨 Zpracováno zpráv</div>
+                            <div style="font-size: 1.4rem; font-weight: 800; color: #7e22ce;" id="dash-msg-count">
+                                <?php echo htmlspecialchars($status['processed_messages_count'] ?? '0'); ?>
+                            </div>
+                            <div style="font-size: 0.82rem; color: #64748b; margin-top: 4px;">
+                                <?php echo ($status['last_publish_time'] ?? null) ? 'Poslední: ' . htmlspecialchars($status['last_publish_time']) : 'Zatím žádné'; ?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Update Check -->
+                    <?php if (!empty($status['update_available']) && $status['update_available']): ?>
+                        <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                            <span style="font-size: 1.2rem;">🆕</span>
+                            <div>
+                                <strong style="color: #b45309;"><?php echo htmlspecialchars($L['DASH_UPDATE_AVAILABLE'] ?? 'Nová verze je dostupná!'); ?></strong>
+                                <span style="color: #92400e; font-size: 0.9rem; margin-left: 8px;">v<?php echo htmlspecialchars($status['latest_version'] ?? ''); ?></span>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
+                    <!-- Recent Actions Table -->
+                    <?php if (!empty($status['recent_actions'])): ?>
+                        <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">📋 <?php echo htmlspecialchars($L['DASH_RECENT_ACTIONS'] ?? 'Poslední události'); ?></h4>
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
+                                <thead>
+                                    <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                                        <th style="text-align: left; padding: 10px 12px; font-weight: 700; color: #475569;">Čas</th>
+                                        <th style="text-align: left; padding: 10px 12px; font-weight: 700; color: #475569;">Typ</th>
+                                        <th style="text-align: left; padding: 10px 12px; font-weight: 700; color: #475569;">Odesílatel</th>
+                                        <th style="text-align: left; padding: 10px 12px; font-weight: 700; color: #475569;">Topic</th>
+                                        <th style="text-align: left; padding: 10px 12px; font-weight: 700; color: #475569;">Payload</th>
+                                        <th style="text-align: left; padding: 10px 12px; font-weight: 700; color: #475569;">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($status['recent_actions'] as $action): ?>
+                                        <tr style="border-bottom: 1px solid #f1f5f9;">
+                                            <td style="padding: 8px 12px; color: #64748b; font-family: monospace; font-size: 0.82rem; white-space: nowrap;"><?php echo htmlspecialchars($action['timestamp'] ?? ''); ?></td>
+                                            <td style="padding: 8px 12px;">
+                                                <span class="lox-badge-info"><?php echo htmlspecialchars($action['type'] ?? ''); ?></span>
+                                            </td>
+                                            <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;"><?php echo htmlspecialchars($action['sender'] ?? ''); ?></td>
+                                            <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem; color: #0369a1;"><?php echo htmlspecialchars($action['topic'] ?? ''); ?></td>
+                                            <td style="padding: 8px 12px; font-weight: 600;"><?php echo htmlspecialchars($action['payload'] ?? ''); ?></td>
+                                            <td style="padding: 8px 12px;">
+                                                <?php
+                                                $st = $action['status'] ?? 'UNKNOWN';
+                                                $stClass = ($st === 'SUCCESS') ? 'lox-badge-success' : 'lox-badge-danger';
+                                                ?>
+                                                <span class="<?php echo $stClass; ?>"><?php echo htmlspecialchars($st); ?></span>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php else: ?>
+                        <div style="text-align: center; padding: 20px; color: #94a3b8; font-style: italic;">
+                            <?php echo htmlspecialchars($L['DASH_NO_EVENTS'] ?? 'Zatím nebyly zaznamenány žádné události.'); ?>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
+            </div>
         </div>
+
+        <script>
+            // Auto-refresh dashboard every 5 seconds via AJAX
+            function refreshDashboard() {
+                fetch('?tab=dashboard&_ajax=1')
+                    .then(r => r.text())
+                    .then(html => {
+                        // Only update if page is still on dashboard tab
+                        if (window.location.search.includes('tab=dashboard')) {
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(html, 'text/html');
+                            const newContent = doc.querySelector('.lox-card-body');
+                            const currentContent = document.querySelector('.lox-card-body');
+                            if (newContent && currentContent) {
+                                currentContent.innerHTML = newContent.innerHTML;
+                            }
+                            const updateEl = document.getElementById('dash-last-update');
+                            if (updateEl) updateEl.textContent = 'Aktualizováno: ' + new Date().toLocaleTimeString('cs-CZ');
+                        }
+                    })
+                    .catch(() => {});
+            }
+            setInterval(refreshDashboard, 5000);
+            // Show initial timestamp
+            const initEl = document.getElementById('dash-last-update');
+            if (initEl) initEl.textContent = 'Aktualizováno: ' + new Date().toLocaleTimeString('cs-CZ');
+        </script>
 
     <?php elseif ($active_tab === 'logs'): ?>
         <!-- System Logs Tab -->

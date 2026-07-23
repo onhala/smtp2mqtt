@@ -55,5 +55,11 @@
     "HELP_LOXONE_TITLE": "🏠 Loxone Config Integration",
     "HELP_LOXONE_DESC": "In Loxone Config, add MQTT Text In Subscriptions for topic smtp2mqtt/#. Example: smtp2mqtt/garden_camera-home_local changes to ON when motion is detected and returns to OFF after 10 seconds.",
     "HELP_SEC_TITLE": "🛡️ Security Recommendations",
-    "HELP_SEC_DESC": "Never expose the SMTP service directly to the public internet without a VPN. To prevent spam on your local network, use the ALLOWED_IPS field to restrict access exclusively to your camera IP addresses."
+    "HELP_SEC_DESC": "Never expose the SMTP service directly to the public internet without a VPN. To prevent spam on your local network, use the ALLOWED_IPS field to restrict access exclusively to your camera IP addresses.",
+
+    "DASH_NO_DATA": "Dashboard has no data yet.",
+    "DASH_NO_DATA_DESC": "The smtp2mqtt service has not been started yet or has not written its status file. Click 'Start Service' to activate.",
+    "DASH_UPDATE_AVAILABLE": "A new plugin version is available!",
+    "DASH_RECENT_ACTIONS": "Recent Events",
+    "DASH_NO_EVENTS": "No events have been recorded yet."
 }

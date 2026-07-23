@@ -87,6 +87,8 @@ def test_shell_scripts_syntax_shebang_and_line_endings():
         "postupgrade.sh",
         "preremove.sh",
         "loxberry-build.sh",
+        os.path.join("daemon", "daemon"),
+        os.path.join("uninstall", "uninstall"),
     ]
 
     for script_name in scripts:
@@ -159,8 +161,12 @@ def test_loxberry_zip_packaging_integrity(tmp_path):
             "preupgrade.sh",
             "postupgrade.sh",
             "preremove.sh",
+            "daemon/daemon",
+            "uninstall/uninstall",
+            "dpkg/apt",
             "smtp2mqtt.py",
             "requirements.txt",
+            "icons/icon.svg",
             "icons/icon_64.png",
             "icons/icon_128.png",
             "icons/icon_256.png",
@@ -170,4 +176,5 @@ def test_loxberry_zip_packaging_integrity(tmp_path):
         ]
         for mandatory in mandatory_files:
             assert mandatory in file_list, f"ZIP package is missing required file: {mandatory}"
+
 

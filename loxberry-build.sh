@@ -6,7 +6,7 @@ set -e
 PLUGIN_NAME="smtp2mqtt"
 VERSION=$(grep -i '^VERSION=' plugin.cfg | head -n 1 | cut -d'=' -f2 | tr -d '\r ')
 if [ -z "$VERSION" ]; then
-    VERSION="1.7.0"
+    VERSION="1.8.16"
 fi
 ZIP_NAME="${PLUGIN_NAME}-loxberry-v${VERSION}.zip"
 
@@ -16,7 +16,7 @@ echo "📦 Packaging LoxBerry Plugin: ${ZIP_NAME}..."
 rm -f "${ZIP_NAME}"
 
 # Ensure executable bits
-chmod +x postinstall.sh preupgrade.sh postupgrade.sh preremove.sh smtp2mqtt.py 2>/dev/null || true
+chmod +x postinstall.sh preupgrade.sh postupgrade.sh preremove.sh daemon/daemon uninstall/uninstall smtp2mqtt.py 2>/dev/null || true
 
 # Build ZIP archive
 zip -r "${ZIP_NAME}" \
@@ -29,6 +29,9 @@ zip -r "${ZIP_NAME}" \
     preremove.sh \
     smtp2mqtt.py \
     bin/ \
+    daemon/ \
+    uninstall/ \
+    dpkg/ \
     requirements.txt \
     favicon.svg \
     logo.svg \

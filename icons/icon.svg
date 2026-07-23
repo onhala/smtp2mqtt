@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- Clean, minimalist flat-vector logo featuring an envelope transmitting to WiFi waves -->
+  <defs>
+    <!-- Dark drop-shadow to guarantee high contrast on both light and dark GitHub background themes -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.8" />
+    </filter>
+  </defs>
+
+  <!-- Redesigned cohesive concept: Envelope (SMTP) -> Arrow -> WiFi/network waves (MQTT) -->
+  <g transform="translate(102, 10) scale(0.6)" filter="url(#shadow)">
+    <!-- Envelope (representing SMTP) -->
+    <rect x="112" y="320" width="288" height="162" rx="20" fill="none" stroke="#ffffff" stroke-width="28" stroke-linejoin="round" />
+    <path d="M 112 320 L 256 410 L 400 320" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" />
+
+    <!-- Bold Green Transmission Arrow pointing UP (representing gateway/forwarding) -->
+    <path d="M 256 440 L 256 230" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
+    <path d="M 216 270 L 256 230 L 296 270" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
+
+    <!-- Concentric WiFi waves (representing MQTT wireless/mesh/network broadcast) -->
+    <!-- First wave arc (radius 100) -->
+    <path d="M 185 209 A 100 100 0 0 1 327 209" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
+    <!-- Second wave arc (radius 180) -->
+    <path d="M 129 153 A 180 180 0 0 1 383 153" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
+    <!-- Third wave arc (radius 260) -->
+    <path d="M 72 96 A 260 260 0 0 1 440 96" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
+  </g>
+
+  <!-- Technical Branding Text below -->
+  <g filter="url(#shadow)">
+    <text x="256" y="390" font-family="'Share Tech Mono', monospace" font-size="52" font-weight="bold" fill="#7ec127" text-anchor="middle" letter-spacing="6">SMTP2MQTT</text>
+    <text x="256" y="435" font-family="'Inter', sans-serif" font-weight="700" font-size="16" fill="#8b949e" text-anchor="middle" letter-spacing="10">GATEWAY CONTROLLER</text>
+  </g>
+</svg>

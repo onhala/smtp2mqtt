@@ -1,0 +1,16 @@
+#!/bin/bash
+# LoxBerry Uninstall Script for smtp2mqtt
+# Executed as root during plugin uninstallation
+
+if [ -f /etc/environment ]; then
+    . /etc/environment
+fi
+
+echo "<INFO> Stopping smtp2mqtt service before uninstallation..."
+pkill -9 -f "smtp2mqtt.py" 2>/dev/null || true
+
+echo "<INFO> Cleaning up temporary log files and runtime state..."
+rm -rf "${LBPLOG:-/opt/loxberry/log/plugins}/smtp2mqtt" 2>/dev/null || true
+
+echo "<OK> smtp2mqtt uninstallation pre-clean completed successfully."
+exit 0

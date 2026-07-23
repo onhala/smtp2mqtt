@@ -1,0 +1,59 @@
+#!/bin/bash
+# LoxBerry Init Daemon script for smtp2mqtt
+# Executed at boot time by LoxBerry init system as root
+
+if [ -f /etc/environment ]; then
+    . /etc/environment
+fi
+
+LBHOMEDIR="${LBHOMEDIR:-/opt/loxberry}"
+PLUGIN_DIR="${LBPBIN:-$LBHOMEDIR/bin/plugins}/smtp2mqtt"
+DAEMON="$PLUGIN_DIR/smtp2mqtt.py"
+
+if [ ! -f "$DAEMON" ]; then
+    DAEMON="$PLUGIN_DIR/bin/smtp2mqtt.py"
+fi
+
+case "$1" in
+    start)
+        echo "<INFO> Starting smtp2mqtt daemon..."
+        if [ -f "$DAEMON" ]; then
+            pkill -f "smtp2mqtt.py" 2>/dev/null || true
+            sleep 1
+            if id -u loxberry >/dev/null 2>&1; then
+                su - loxberry -c "nohup python3 '$DAEMON' > /dev/null 2>&1 &" || nohup python3 "$DAEMON" > /dev/null 2>&1 &
+            else
+                nohup python3 "$DAEMON" > /dev/null 2>&1 &
+            fi
+            echo "<OK> smtp2mqtt daemon started successfully."
+        else
+            echo "<ERROR> Daemon executable not found at $DAEMON"
+            exit 1
+        fi
+        ;;
+    stop)
+        echo "<INFO> Stopping smtp2mqtt daemon..."
+        pkill -f "smtp2mqtt.py" 2>/dev/null || true
+        echo "<OK> smtp2mqtt daemon stopped."
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    status)
+        if pgrep -f "smtp2mqtt.py" > /dev/null; then
+            echo "<OK> smtp2mqtt is running."
+            exit 0
+        else
+            echo "<WARNING> smtp2mqtt is not running."
+            exit 1
+        fi
+        ;;
+    *)
+        # Default boot action
+        $0 start
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,5 @@
+# System APT packages required by smtp2mqtt LoxBerry Plugin
+python3-pip
+python3-aiosmtpd
+python3-paho-mqtt
+python3-pil
