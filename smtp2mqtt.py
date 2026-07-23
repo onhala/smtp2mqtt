@@ -19,6 +19,7 @@ for site in extra_paths:
 
 import asyncio
 import email
+import ipaddress
 import json
 import logging
 import signal
@@ -69,6 +70,8 @@ except ModuleNotFoundError as err:
 # Default configurations
 defaults: Dict[str, Union[str, int]] = {
     "SMTP_PORT": 1025,
+    "SMTP_HOST": "0.0.0.0",
+    "ALLOWED_IPS": "192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 127.0.0.1",
     "MQTT_HOST": "localhost",
     "MQTT_PORT": 1883,
     "MQTT_USERNAME": "",
@@ -236,7 +239,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.15"
+VERSION = "1.8.16"
 
 
 class smtp2mqttHandler:
@@ -345,6 +348,45 @@ class smtp2mqttHandler:
     def _on_mqtt_disconnect(self, client: Any, userdata: Any, disconnect_flags: Any, rc: int, properties: Any = None) -> None:
         log.warning("Persistent MQTT client disconnected: return code %s", rc)
         self.mqtt_connected_status = False
+
+    def is_ip_allowed(self, peer_ip: Optional[str]) -> bool:
+        """Verifies whether client peer_ip is permitted by ALLOWED_IPS config."""
+        allowed_ips_setting = str(config.get("ALLOWED_IPS", "")).strip()
+        if not allowed_ips_setting or allowed_ips_setting == "*":
+            return True
+        if not peer_ip:
+            return False
+
+        try:
+            client_addr = ipaddress.ip_address(peer_ip)
+        except ValueError:
+            return False
+
+        for net_str in allowed_ips_setting.split(","):
+            net_str = net_str.strip()
+            if not net_str:
+                continue
+            if net_str == "*":
+                return True
+            try:
+                if "/" not in net_str:
+                    net = ipaddress.ip_network(f"{net_str}/32", strict=False)
+                else:
+                    net = ipaddress.ip_network(net_str, strict=False)
+                if client_addr in net:
+                    return True
+            except ValueError as e:
+                log.warning("Invalid IP network pattern in ALLOWED_IPS: %s (%s)", net_str, e)
+
+        return False
+
+    async def handle_CONNECT(self, server: Any, session: Any, envelope: Any) -> str:
+        """Enforces IP Whitelist filtering on incoming SMTP connections."""
+        peer_ip = session.peer[0] if session and hasattr(session, "peer") and session.peer else None
+        if not self.is_ip_allowed(peer_ip):
+            log.warning("Rejected SMTP connection from unauthorized IP: %s", peer_ip)
+            return f"554 5.7.1 Access denied: IP address {peer_ip} not allowed"
+        return "220 Welcome to smtp2mqtt"
 
     async def handle_DATA(self, server: Any, session: Any, envelope: Any) -> str:
         """Processes incoming SMTP email messages."""
@@ -1638,14 +1680,14 @@ def main():
     controller = UnthreadedController(
         handler=handler,
         loop=loop,
-        hostname="0.0.0.0",
+        hostname=config.get("SMTP_HOST", "0.0.0.0"),
         port=config["SMTP_PORT"],
     )
     handler.smtp_controller = controller
 
     # Start the controller synchronously (schedules the server creation inside loop)
     controller.begin()
-    log.info("SMTP server is listening on 0.0.0.0:%d", config["SMTP_PORT"])
+    log.info("SMTP server is listening on %s:%d", config.get("SMTP_HOST", "0.0.0.0"), config["SMTP_PORT"])
 
     # Start the web server if enabled
     web_server = None

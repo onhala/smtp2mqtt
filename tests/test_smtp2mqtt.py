@@ -37,7 +37,59 @@ def test_parse_bool():
     assert smtp2mqtt.parse_bool(None) is False
     assert smtp2mqtt.parse_bool("random") is False
 
-def test_config_loading_fallback_value_error():
+def test_is_ip_allowed():
+    """Verify IP whitelist checking logic."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    # Allow all wildcard
+    with mock.patch.dict(smtp2mqtt.config, {"ALLOWED_IPS": "*"}):
+        assert handler.is_ip_allowed("192.168.1.100") is True
+        assert handler.is_ip_allowed("10.0.0.1") is True
+
+    # Empty string allows all
+    with mock.patch.dict(smtp2mqtt.config, {"ALLOWED_IPS": ""}):
+        assert handler.is_ip_allowed("192.168.1.100") is True
+
+    # Subnet filtering
+    with mock.patch.dict(smtp2mqtt.config, {"ALLOWED_IPS": "192.168.1.0/24, 10.0.0.5, 127.0.0.1"}):
+        assert handler.is_ip_allowed("192.168.1.50") is True
+        assert handler.is_ip_allowed("192.168.1.254") is True
+        assert handler.is_ip_allowed("10.0.0.5") is True
+        assert handler.is_ip_allowed("127.0.0.1") is True
+
+        # Unauthorized IPs
+        assert handler.is_ip_allowed("192.168.2.50") is False
+        assert handler.is_ip_allowed("10.0.0.6") is False
+        assert handler.is_ip_allowed("8.8.8.8") is False
+        assert handler.is_ip_allowed(None) is False
+        assert handler.is_ip_allowed("invalid_ip") is False
+
+@pytest.mark.asyncio
+async def test_handle_connect_rejected():
+    """Verify that unauthorized client IP connection is rejected with 554."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    session = mock.MagicMock()
+    session.peer = ("203.0.113.195", 54321)
+
+    with mock.patch.dict(smtp2mqtt.config, {"ALLOWED_IPS": "192.168.1.0/24, 127.0.0.1"}):
+        res = await handler.handle_CONNECT(mock.MagicMock(), session, mock.MagicMock())
+        assert "554 5.7.1 Access denied" in res
+
+@pytest.mark.asyncio
+async def test_handle_connect_allowed():
+    """Verify that authorized client IP connection is accepted with 220."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    session = mock.MagicMock()
+    session.peer = ("192.168.1.45", 54321)
+
+    with mock.patch.dict(smtp2mqtt.config, {"ALLOWED_IPS": "192.168.1.0/24, 127.0.0.1"}):
+        res = await handler.handle_CONNECT(mock.MagicMock(), session, mock.MagicMock())
+        assert "220 Welcome" in res
     """Verify that configuration loading gracefully falls back to defaults on integer parsing error."""
     with mock.patch.dict(os.environ, {"SMTP_PORT": "not_an_int"}):
         importlib.reload(smtp2mqtt)

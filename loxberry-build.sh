@@ -34,6 +34,7 @@ zip -r "${ZIP_NAME}" \
     logo.svg \
     icons/ \
     webfrontend/ \
+    templates/ \
     -x "*.pyc" "__pycache__/*" ".git/*" ".venv/*" ".pytest_cache/*" "tests/*" "deploy/*" "docs/*" ".coverage"
 
 echo "✅ Build completed successfully: ${ZIP_NAME}"

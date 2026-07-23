@@ -2,8 +2,16 @@
 require_once "loxberry_web.php";
 require_once "loxberry_system.php";
 
-// Read LoxBerry language file if present
-$L = LBSystem::readlanguage("language.ini");
+// Read LoxBerry language dictionary with fallback
+$sys_lang = strtolower(substr($lbpconfig['BASE']['LANG'] ?? 'cs', 0, 2));
+$lang_code = in_array($sys_lang, ['cs', 'en']) ? $sys_lang : 'cs';
+$lang_file = __DIR__ . "/../../templates/lang/language_" . $lang_code . ".json";
+if (!file_exists($lang_file)) {
+    $lang_file = "/opt/loxberry/templates/plugins/smtp2mqtt/lang/language_" . $lang_code . ".json";
+}
+$L_json = file_exists($lang_file) ? (json_decode(file_get_contents($lang_file), true) ?? []) : [];
+$L_ini = LBSystem::readlanguage("language.ini");
+$L = array_merge(is_array($L_ini) ? $L_ini : [], $L_json);
 
 // Define paths
 $config_dir = $lbpconfigdir;
@@ -38,6 +46,8 @@ foreach ($daemon_candidates as $cand) {
 $defaults = [
     "WEB_PORT" => 8080,
     "SMTP_PORT" => 1025,
+    "SMTP_HOST" => "0.0.0.0",
+    "ALLOWED_IPS" => "192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 127.0.0.1",
     "USE_LOXBERRY_MQTT" => "True",
     "MQTT_HOST" => "localhost",
     "MQTT_PORT" => 1883,
@@ -115,6 +125,9 @@ $message_type = "success";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
     $config['WEB_PORT'] = intval($_POST['web_port'] ?? 8080);
     $config['SMTP_PORT'] = intval($_POST['smtp_port'] ?? 1025);
+    $config['SMTP_HOST'] = trim($_POST['smtp_host'] ?? '0.0.0.0');
+    $config['ALLOWED_IPS'] = trim($_POST['allowed_ips'] ?? '192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 127.0.0.1');
+
     $use_auto = isset($_POST['use_loxberry_mqtt']);
     $config['USE_LOXBERRY_MQTT'] = $use_auto ? "True" : "False";
 
@@ -146,8 +159,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
     if (file_put_contents($config_file, json_encode($config, JSON_PRETTY_PRINT))) {
         $message = "Konfigurace uložena. Restartuji službu smtp2mqtt...";
         // Restart daemon process without sudo
-        exec("pkill -f smtp2mqtt.py 2>&1");
-        sleep(1);
+        exec("pkill -9 -f smtp2mqtt.py 2>&1");
+        sleep(2);
         exec("nohup python3 " . escapeshellarg($daemon_script) . " > /dev/null 2>&1 &");
     } else {
         $message = "Chyba při zápisu do konfiguračního souboru!";
@@ -202,29 +215,28 @@ $active_tab = $_GET['tab'] ?? 'settings';
     .lox-nav-tabs {
         display: flex;
         gap: 8px;
-        border-bottom: 2px solid #e2e8f0;
         margin-bottom: 20px;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 2px;
     }
     .lox-tab-btn {
-        padding: 10px 20px;
+        padding: 10px 18px;
         font-weight: 600;
-        font-size: 0.95rem;
         color: #64748b;
         text-decoration: none;
-        border-bottom: 3px solid transparent;
-        transition: all 0.2s;
-        display: flex;
-        align-items: center;
-        gap: 6px;
+        border-radius: 6px 6px 0 0;
+        transition: all 0.2s ease;
+        background: #f1f5f9;
+        font-size: 0.95rem;
     }
     .lox-tab-btn:hover {
-        color: #2e7d32;
+        color: #0f172a;
+        background: #e2e8f0;
     }
     .lox-tab-btn.active {
-        color: #2e7d32;
-        border-bottom-color: #6fb738;
-        background: #f1f8e9;
-        border-radius: 6px 6px 0 0;
+        color: #ffffff;
+        background: #6fb738;
+        font-weight: 700;
     }
     .lox-btn-primary {
         background: #6fb738;
@@ -232,16 +244,12 @@ $active_tab = $_GET['tab'] ?? 'settings';
         border: none;
         padding: 10px 20px;
         border-radius: 6px;
-        font-weight: bold;
+        font-weight: 700;
         cursor: pointer;
-        transition: background 0.2s;
-        text-decoration: none;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
+        transition: background 0.2s ease;
     }
     .lox-btn-primary:hover {
-        background: #5ea02f;
+        background: #5ea42e;
     }
     .lox-btn-secondary {
         background: #f1f5f9;
@@ -313,13 +321,16 @@ $active_tab = $_GET['tab'] ?? 'settings';
     <!-- Navigation Tabs -->
     <div class="lox-nav-tabs">
         <a href="?tab=settings" class="lox-tab-btn <?php echo $active_tab === 'settings' ? 'active' : ''; ?>">
-            ⚙️ Nastavení Pluginu
+            <?php echo htmlspecialchars($L['TAB_SETTINGS'] ?? '⚙️ Nastavení Pluginu'); ?>
         </a>
         <a href="?tab=dashboard" class="lox-tab-btn <?php echo $active_tab === 'dashboard' ? 'active' : ''; ?>">
-            📊 Živý Dashboard
+            <?php echo htmlspecialchars($L['TAB_DASHBOARD'] ?? '📊 Živý Dashboard'); ?>
         </a>
         <a href="?tab=logs" class="lox-tab-btn <?php echo $active_tab === 'logs' ? 'active' : ''; ?>">
-            📋 Systémový Log
+            <?php echo htmlspecialchars($L['TAB_LOGS'] ?? '📋 Prohlížeč Logů'); ?>
+        </a>
+        <a href="?tab=help" class="lox-tab-btn <?php echo $active_tab === 'help' ? 'active' : ''; ?>">
+            <?php echo htmlspecialchars($L['TAB_HELP'] ?? '📖 Nápověda & Průvodce'); ?>
         </a>
     </div>
 
@@ -328,39 +339,63 @@ $active_tab = $_GET['tab'] ?? 'settings';
         <div class="lox-card">
             <div class="lox-card-header">
                 <div style="display: flex; align-items: center; gap: 12px;">
-                    <h3 class="lox-card-title">⚙️ Konfigurace služby smtp2mqtt</h3>
+                    <h3 class="lox-card-title"><?php echo htmlspecialchars($L['TITLE'] ?? 'SMTP to MQTT Bridge'); ?></h3>
                     <?php if ($is_running): ?>
                         <span class="lox-badge-success">🟢 Služba Běží</span>
                     <?php else: ?>
                         <span class="lox-badge-danger">🔴 Služba Zastavena</span>
                     <?php endif; ?>
                 </div>
-                <span class="lox-badge-info">Verze 1.8.3</span>
+                <span class="lox-badge-info">v1.8.16</span>
             </div>
             <div class="lox-card-body">
                 <form method="post" action="?tab=settings" id="config-form">
                     
-                    <!-- Network Ports -->
-                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🌐 Síťová Rozhraní</h4>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 25px;">
+                    <!-- Network Ports & Binding -->
+                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;"><?php echo htmlspecialchars($L['SEC_SERVERS'] ?? '🌐 Nastavení Serverů (SMTP & Web)'); ?></h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px;">
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Web Dashboard Port:</label>
-                            <input type="number" name="web_port" value="<?php echo htmlspecialchars($config['WEB_PORT']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_SMTP_PORT'] ?? 'SMTP Server Port'); ?>:</label>
+                            <input type="number" name="smtp_port" value="<?php echo htmlspecialchars($config['SMTP_PORT']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <span style="font-size: 0.78rem; color: #64748b; display: block; margin-top: 3px;"><?php echo htmlspecialchars($L['HELP_SMTP_PORT'] ?? 'Port, na kterém naslouchá vestavěný SMTP server.'); ?></span>
+                        </div>
+
+                        <div>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_BIND_HOST'] ?? 'Vazební rozhraní (BIND_HOST)'); ?>:</label>
+                            <select name="smtp_host" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; background: white;">
+                                <option value="0.0.0.0" <?php echo ($config['SMTP_HOST'] === '0.0.0.0') ? 'selected' : ''; ?>>0.0.0.0 (Všechna síťová rozhraní / LAN)</option>
+                                <option value="127.0.0.1" <?php echo ($config['SMTP_HOST'] === '127.0.0.1') ? 'selected' : ''; ?>>127.0.0.1 (Pouze Localhost)</option>
+                            </select>
+                            <span style="font-size: 0.78rem; color: #64748b; display: block; margin-top: 3px;"><?php echo htmlspecialchars($L['HELP_BIND_HOST'] ?? '0.0.0.0 = Všechna rozhraní, 127.0.0.1 = Localhost.'); ?></span>
                         </div>
                         
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">SMTP Server Port:</label>
-                            <input type="number" name="smtp_port" value="<?php echo htmlspecialchars($config['SMTP_PORT']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_WEB_PORT'] ?? 'Web Admin Port'); ?>:</label>
+                            <input type="number" name="web_port" value="<?php echo htmlspecialchars($config['WEB_PORT']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <span style="font-size: 0.78rem; color: #64748b; display: block; margin-top: 3px;"><?php echo htmlspecialchars($L['HELP_WEB_PORT'] ?? 'Port pro vestavěný Dashboard.'); ?></span>
                         </div>
                     </div>
 
+                    <!-- Security & Firewall Settings -->
+                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;"><?php echo htmlspecialchars($L['SEC_FIREWALL'] ?? '🔒 Bezpečnost & IP Firewall'); ?></h4>
+                    <div style="margin-bottom: 25px;">
+                        <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_ALLOWED_IPS'] ?? 'Povolené IP adresy a podsítě (ALLOWED_IPS)'); ?>:</label>
+                        <input type="text" name="allowed_ips" value="<?php echo htmlspecialchars($config['ALLOWED_IPS']); ?>" placeholder="192.168.1.0/24, 10.0.0.5, 127.0.0.1" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                        <span style="font-size: 0.8rem; color: #64748b; display: block; margin-top: 4px;"><?php echo htmlspecialchars($L['HELP_ALLOWED_IPS'] ?? 'Čárkou oddělený seznam povolených IP/CIDR. Ponechte prázdné nebo * pro povolené vše.'); ?></span>
+                        <?php if (trim($config['ALLOWED_IPS']) === '*' || trim($config['ALLOWED_IPS']) === ''): ?>
+                            <div style="margin-top: 8px; font-size: 0.82rem; color: #b45309; background: #fffbebf; padding: 8px 12px; border-radius: 4px; border: 1px solid #fef3c7;">
+                                <?php echo htmlspecialchars($L['WARN_ALLOWED_IPS_ALL'] ?? '⚠️ Pozor: Zadáno * nebo prázdné pole. SMTP server přijme e-maily z jakékoliv IP adresy.'); ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
                     <!-- MQTT Broker Settings -->
-                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">📡 MQTT Broker & Témata</h4>
+                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;"><?php echo htmlspecialchars($L['SEC_MQTT'] ?? '📡 Nastavení MQTT Brokeru'); ?></h4>
                     
                     <div style="margin-bottom: 15px; background: #f8fafc; padding: 12px 15px; border-radius: 6px; border: 1px solid #e2e8f0;">
                         <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
                             <input type="checkbox" name="use_loxberry_mqtt" id="use_loxberry_mqtt" onchange="toggleMqttFields()" <?php echo ($config['USE_LOXBERRY_MQTT'] === "True" || $config['USE_LOXBERRY_MQTT'] === true) ? 'checked' : ''; ?>>
-                            <span style="font-weight: 700; color: #2e7d32;">Použít automatickou detekci z LoxBerry MQTT Gateway V2</span>
+                            <span style="font-weight: 700; color: #2e7d32;"><?php echo htmlspecialchars($L['LABEL_USE_LOXBERRY_MQTT'] ?? 'Použít automatickou detekci z LoxBerry MQTT Gateway V2'); ?></span>
                         </label>
                         <div id="mqtt-auto-badge" style="margin-top: 6px; font-size: 0.85rem; color: #0284c7; display: none;">
                             ℹ️ Přihlašovací údaje jsou automaticky přebírány ze systému LoxBerry a pole níže jsou uzamčena.
@@ -369,56 +404,58 @@ $active_tab = $_GET['tab'] ?? 'settings';
 
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 25px;">
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Server Host:</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_HOST'] ?? 'MQTT Server Host'); ?>:</label>
                             <input type="text" name="mqtt_host" id="mqtt_host" value="<?php echo htmlspecialchars($config['MQTT_HOST']); ?>" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Server Port:</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_PORT'] ?? 'MQTT Server Port'); ?>:</label>
                             <input type="number" name="mqtt_port" id="mqtt_port" value="<?php echo htmlspecialchars($config['MQTT_PORT']); ?>" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Uživatel:</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_USER'] ?? 'MQTT Uživatel'); ?>:</label>
                             <input type="text" name="mqtt_username" id="mqtt_username" value="<?php echo htmlspecialchars($config['MQTT_USERNAME']); ?>" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Heslo:</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_PASS'] ?? 'MQTT Heslo'); ?>:</label>
                             <input type="password" name="mqtt_password" id="mqtt_password" value="<?php echo htmlspecialchars($config['MQTT_PASSWORD']); ?>" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Root Topic:</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_TOPIC'] ?? 'MQTT Root Topic'); ?>:</label>
                             <input type="text" name="mqtt_topic" value="<?php echo htmlspecialchars($config['MQTT_TOPIC']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <span style="font-size: 0.78rem; color: #64748b; display: block; margin-top: 3px;"><?php echo htmlspecialchars($L['HELP_MQTT_TOPIC'] ?? 'E-maily vytvoří pod-topicy, např. smtp2mqtt/kamera_zahrada.'); ?></span>
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Trigger Payload:</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_PAYLOAD'] ?? 'MQTT Trigger Payload'); ?>:</label>
                             <input type="text" name="mqtt_payload" value="<?php echo htmlspecialchars($config['MQTT_PAYLOAD']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Reset Čas (sec):</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_RESET_TIME'] ?? 'MQTT Reset Čas (sec)'); ?>:</label>
                             <input type="number" name="mqtt_reset_time" value="<?php echo htmlspecialchars($config['MQTT_RESET_TIME']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <span style="font-size: 0.78rem; color: #64748b; display: block; margin-top: 3px;"><?php echo htmlspecialchars($L['HELP_MQTT_RESET_TIME'] ?? 'Sekundy pro auto-reset (0 = nevypínat).'); ?></span>
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Reset Payload:</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_MQTT_RESET_PAYLOAD'] ?? 'MQTT Reset Payload'); ?>:</label>
                             <input type="text" name="mqtt_reset_payload" value="<?php echo htmlspecialchars($config['MQTT_RESET_PAYLOAD']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
                     </div>
 
-                    <!-- Maintenance & Media Retention -->
-                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🧹 Přílohy & Údržba</h4>
+                    <!-- Maintenance & Retention -->
+                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;"><?php echo htmlspecialchars($L['SEC_ATTACHMENTS'] ?? '🖼️ Přílohy & Údržba'); ?></h4>
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px;">
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Retence Příloh (Dní):</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_CLEANUP_ATTACHMENTS'] ?? 'Retence Příloh (Dní)'); ?>:</label>
                             <input type="number" name="cleanup_attachments_days" value="<?php echo htmlspecialchars($config['CLEANUP_ATTACHMENTS_DAYS']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Retence Logů (Dní):</label>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;"><?php echo htmlspecialchars($L['LABEL_CLEANUP_LOGS'] ?? 'Retence Logů (Dní)'); ?>:</label>
                             <input type="number" name="cleanup_logs_days" value="<?php echo htmlspecialchars($config['CLEANUP_LOGS_DAYS']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
                     </div>
@@ -426,18 +463,18 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <div style="display: flex; gap: 25px; margin-top: 15px; align-items: center;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" name="save_attachments" <?php echo ($config['SAVE_ATTACHMENTS'] === "True" || $config['SAVE_ATTACHMENTS'] === true) ? 'checked' : ''; ?>>
-                            <span style="font-weight: 600; color: #334155;">Ukládat obrázkové přílohy z e-mailů</span>
+                            <span style="font-weight: 600; color: #334155;"><?php echo htmlspecialchars($L['LABEL_SAVE_ATTACHMENTS'] ?? 'Ukládat obrázkové přílohy z e-mailů'); ?></span>
                         </label>
                         
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" name="debug" <?php echo ($config['DEBUG'] === "True" || $config['DEBUG'] === true) ? 'checked' : ''; ?>>
-                            <span style="font-weight: 600; color: #334155;">Ladící režim (DEBUG)</span>
+                            <span style="font-weight: 600; color: #334155;"><?php echo htmlspecialchars($L['LABEL_DEBUG'] ?? 'Ladící režim (DEBUG)'); ?></span>
                         </label>
                     </div>
 
                     <div style="margin-top: 25px; border-top: 1px solid #e2e8f0; padding-top: 15px; display: flex; gap: 15px; align-items: center;">
-                        <button type="submit" name="save_settings" class="lox-btn-primary">💾 Uložit & Restartovat Službu</button>
-                        <a href="?action=restart_daemon" class="lox-btn-secondary">🔄 Vynutit Restart Služby</a>
+                        <button type="submit" name="save_settings" class="lox-btn-primary"><?php echo htmlspecialchars($L['BTN_SAVE'] ?? '💾 Uložit Nastavení'); ?></button>
+                        <a href="?action=restart_daemon" class="lox-btn-secondary"><?php echo htmlspecialchars($L['BTN_RESTART_DAEMON'] ?? '🚀 Spustit / Restartovat Službu'); ?></a>
                     </div>
                 </form>
             </div>
@@ -448,55 +485,33 @@ $active_tab = $_GET['tab'] ?? 'settings';
 
             function toggleMqttFields() {
                 const isAuto = document.getElementById('use_loxberry_mqtt').checked;
-                const hostInput = document.getElementById('mqtt_host');
-                const portInput = document.getElementById('mqtt_port');
-                const userInput = document.getElementById('mqtt_username');
-                const passInput = document.getElementById('mqtt_password');
-                const autoBadge = document.getElementById('mqtt-auto-badge');
+                const fields = ['mqtt_host', 'mqtt_port', 'mqtt_username', 'mqtt_password'];
+                const badge = document.getElementById('mqtt-auto-badge');
 
-                if (isAuto) {
-                    hostInput.value = detectedMqtt.MQTT_HOST;
-                    portInput.value = detectedMqtt.MQTT_PORT;
-                    userInput.value = detectedMqtt.MQTT_USERNAME;
-                    passInput.value = detectedMqtt.MQTT_PASSWORD;
-
-                    hostInput.disabled = true;
-                    portInput.disabled = true;
-                    userInput.disabled = true;
-                    passInput.disabled = true;
-
-                    hostInput.style.backgroundColor = '#f1f5f9';
-                    portInput.style.backgroundColor = '#f1f5f9';
-                    userInput.style.backgroundColor = '#f1f5f9';
-                    passInput.style.backgroundColor = '#f1f5f9';
-
-                    autoBadge.style.display = 'block';
-                } else {
-                    hostInput.disabled = false;
-                    portInput.disabled = false;
-                    userInput.disabled = false;
-                    passInput.disabled = false;
-
-                    hostInput.style.backgroundColor = '#ffffff';
-                    portInput.style.backgroundColor = '#ffffff';
-                    userInput.style.backgroundColor = '#ffffff';
-                    passInput.style.backgroundColor = '#ffffff';
-
-                    autoBadge.style.display = 'none';
-                }
+                fields.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        el.readOnly = isAuto;
+                        el.style.backgroundColor = isAuto ? '#f1f5f9' : '#ffffff';
+                        el.style.color = isAuto ? '#64748b' : '#0f172a';
+                        if (isAuto && id === 'mqtt_host') el.value = detectedMqtt.MQTT_HOST;
+                        if (isAuto && id === 'mqtt_port') el.value = detectedMqtt.MQTT_PORT;
+                        if (isAuto && id === 'mqtt_username') el.value = detectedMqtt.MQTT_USERNAME;
+                        if (isAuto && id === 'mqtt_password') el.value = detectedMqtt.MQTT_PASSWORD;
+                    }
+                });
+                if (badge) badge.style.display = isAuto ? 'block' : 'none';
             }
-            toggleMqttFields();
+
+            document.addEventListener('DOMContentLoaded', toggleMqttFields);
         </script>
 
     <?php elseif ($active_tab === 'dashboard'): ?>
-        <!-- Embedded Dashboard Tab -->
+        <!-- Live Dashboard Tab -->
         <div class="lox-card">
-            <div class="lox-card-header" style="background: #ffffff;">
-                <div>
-                    <h3 class="lox-card-title">📧 smtp2mqtt Live Dashboard</h3>
-                    <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #64748b;">Živý přehled přijatých zpráv, kamerových snapshotů a stavu připojení na portu <?php echo htmlspecialchars($port); ?></p>
-                </div>
-                <div>
+            <div class="lox-card-header">
+                <h3 class="lox-card-title"><?php echo htmlspecialchars($L['TAB_DASHBOARD'] ?? '📊 Živý Dashboard'); ?></h3>
+                <div style="display: flex; gap: 10px;">
                     <a href="<?php echo $dashboard_url; ?>" target="_blank" class="lox-btn-secondary">Otevřít samostatně ↗</a>
                 </div>
             </div>
@@ -508,15 +523,14 @@ $active_tab = $_GET['tab'] ?? 'settings';
         <div class="lox-card">
             <div class="lox-card-header">
                 <div>
-                    <h3 class="lox-card-title">📋 Prohlížeč Logů (smtp2mqtt.log)</h3>
-                    <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #64748b;">Živý log z adresáře pluginu pro ladění a diagnostiku</p>
+                    <h3 class="lox-card-title"><?php echo htmlspecialchars($L['TAB_LOGS'] ?? '📋 Prohlížeč Logů (smtp2mqtt.log)'); ?></h3>
                 </div>
                 <div style="display: flex; gap: 10px;">
-                    <a href="?tab=logs" class="lox-btn-secondary">🔄 Obnovit</a>
-                    <a href="?action=restart_daemon" class="lox-btn-secondary" style="color: #0284c7;">🚀 Spustit Službu</a>
+                    <a href="?tab=logs" class="lox-btn-secondary"><?php echo htmlspecialchars($L['BTN_REFRESH'] ?? '🔄 Obnovit'); ?></a>
+                    <a href="?action=restart_daemon" class="lox-btn-secondary" style="color: #0284c7;"><?php echo htmlspecialchars($L['BTN_RESTART_DAEMON'] ?? '🚀 Spustit Službu'); ?></a>
                     <?php if (file_exists($log_file)): ?>
-                        <a href="?action=download_log" class="lox-btn-secondary">📥 Stáhnout Log</a>
-                        <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="color: #dc2626;">🧹 Vyčistit</a>
+                        <a href="?action=download_log" class="lox-btn-secondary"><?php echo htmlspecialchars($L['BTN_DOWNLOAD_LOG'] ?? '📥 Stáhnout Log'); ?></a>
+                        <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="color: #dc2626;"><?php echo htmlspecialchars($L['BTN_CLEAR_LOG'] ?? '🧹 Vyčistit Log'); ?></a>
                     <?php endif; ?>
                 </div>
             </div>
@@ -555,6 +569,42 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 logBox.scrollTop = logBox.scrollHeight;
             }
         </script>
+
+    <?php elseif ($active_tab === 'help'): ?>
+        <!-- In-App Help & Guide Tab -->
+        <div class="lox-card">
+            <div class="lox-card-header">
+                <h3 class="lox-card-title"><?php echo htmlspecialchars($L['HELP_TITLE'] ?? '📖 Jak používat smtp2mqtt v LoxBerry'); ?></h3>
+            </div>
+            <div class="lox-card-body" style="line-height: 1.6; color: #334155; font-size: 0.95rem;">
+                <p style="font-size: 1.05rem; margin-top: 0; color: #1e293b; background: #f8fafc; padding: 12px 16px; border-radius: 6px; border-left: 4px solid #6fb738;">
+                    <?php echo htmlspecialchars($L['HELP_INTRO'] ?? 'Plugin smtp2mqtt funguje jako lehký SMTP server, který zachytává e-mailové notifikace o detekci pohybu z IP kamer a okamžitě je převádí na MQTT zprávy a triggery pro Loxone / Smart Home.'); ?>
+                </p>
+
+                <h4 style="color: #2e7d32; margin-top: 25px; font-size: 1.1rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;">
+                    <?php echo htmlspecialchars($L['HELP_CAM_TITLE'] ?? '🎥 Návod k nastavení IP kamer (Hikvision, Dahua, Reolink, Axis)'); ?>
+                </h4>
+                <ul style="padding-left: 20px; line-height: 1.8;">
+                    <li><strong><?php echo htmlspecialchars($L['HELP_CAM_STEP1'] ?? '1. Otevřete webové rozhraní vaší IP kamery v sekci Network -> Email.'); ?></strong></li>
+                    <li><strong><?php echo htmlspecialchars($L['HELP_CAM_STEP2'] ?? '2. SMTP Server: Zadejte IP adresu vašeho LoxBerry (např. 192.168.1.100).'); ?></strong></li>
+                    <li><strong><?php echo htmlspecialchars($L['HELP_CAM_STEP3'] ?? '3. SMTP Port: Zadejte nastavený SMTP port (výchozí: 1025).'); ?></strong></li>
+                    <li><strong><?php echo htmlspecialchars($L['HELP_CAM_STEP4'] ?? '4. Autentizace / SSL / TLS: Vypněte SSL/TLS i autentizaci (login a heslo).'); ?></strong></li>
+                    <li><strong><?php echo htmlspecialchars($L['HELP_CAM_STEP5'] ?? '5. Odesílatel (Sender): Zadejte identifikátor kamery, např. kamera.zahrada@domov.local. Z této adresy se automaticky vytvoří MQTT topic: smtp2mqtt/kamera_zahrada-domov_local.'); ?></strong></li>
+                </ul>
+
+                <h4 style="color: #2e7d32; margin-top: 25px; font-size: 1.1rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;">
+                    <?php echo htmlspecialchars($L['HELP_LOXONE_TITLE'] ?? '🏠 Integrace s Loxone Config'); ?>
+                </h4>
+                <p><?php echo htmlspecialchars($L['HELP_LOXONE_DESC'] ?? 'V Loxone Config přidejte MQTT Text In Subscriptions pro topic smtp2mqtt/#. Příklad: smtp2mqtt/kamera_zahrada-domov_local změní hodnotu na ON při detekci pohybu a po 10 sekundách se vrátí na OFF.'); ?></p>
+
+                <h4 style="color: #b91c1c; margin-top: 25px; font-size: 1.1rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px;">
+                    <?php echo htmlspecialchars($L['HELP_SEC_TITLE'] ?? '🛡️ Bezpečnostní doporučení'); ?>
+                </h4>
+                <p style="background: #fef2f2; padding: 12px 16px; border-radius: 6px; border: 1px solid #fecaca; color: #991b1b;">
+                    <?php echo htmlspecialchars($L['HELP_SEC_DESC'] ?? 'Službu SMTP nikdy nevystavujte přímo do veřejného internetu bez VPN. Pro zamezení spamu v lokální síti použijte pole ALLOWED_IPS pro omezení přístupu pouze z IP adres vašich kamer.'); ?>
+                </p>
+            </div>
+        </div>
     <?php endif; ?>
 
 </div>
