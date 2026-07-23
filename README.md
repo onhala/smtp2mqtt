@@ -17,14 +17,49 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 
 ---
 
-## Features
+## 🚀 Dual-Target Architecture & Distribution Options
 
-- **Fully Asynchronous Architecture**: Rewritten using Python's modern `async/await` and `aiosmtpd.controller.UnthreadedController` for non-blocking network and email processing.
-- **Non-blocking IO Execution**: Blocking synchronous operations (such as MQTT publishing and file saving) are executed on a separate thread pool using `asyncio.to_thread` to maintain loop performance.
-- **Graceful Shutdown**: Properly handles termination signals (`SIGINT`, `SIGTERM`) to clean up connections, stop the SMTP server, and cancel active reset timers.
-- **Automatic Topic Resets**: Automatically schedules a reset payload (e.g., `OFF`) after a configurable delay when a trigger payload (e.g., `ON`) is sent.
-- **Optional Image Attachment Saving**: Extracts and saves image attachments (e.g., snapshots from cameras) to a persistent folder.
-- **Robust Configuration**: Robust, case-insensitive parsing of boolean parameters from environment variables.
+`smtp2mqtt` is maintained as a **single unified codebase** that builds and deploys natively for two distinct targets:
+
+| Deployment Target | Packaging Format | Best For | Key Highlights |
+| :--- | :--- | :--- | :--- |
+| **🐳 Docker Container** | Multi-arch Docker Image (`ghcr.io/onhala/smtp2mqtt`) | Portainer, Docker Compose, Unraid, TrueNAS, K8s | Non-root `appuser`, env-var configuration, automated Portainer webhooks |
+| **🍊 Native LoxBerry Plugin** | LoxBerry Zip Package (`smtp2mqtt-loxberry-v1.6.0.zip`) | LoxBerry 3.x+ / Loxone Smart Home Server | Zero-config MQTT Gateway V2, systemd daemon, LoxBerry Web Admin UI, 1-click Auto-Update |
+
+> [!NOTE]
+> Every release tag (e.g. `v1.6.0`) automatically builds both targets concurrently in GitHub Actions CI pipelines: the Docker image is published to GHCR and the LoxBerry ZIP package is attached to GitHub Release Assets.
+
+---
+
+## 🍊 LoxBerry Plugin Edition
+
+`smtp2mqtt` is fully packaged and optimized as a native **LoxBerry Plugin** for Loxone Smart Home servers.
+
+### Key LoxBerry Features
+- **Zero-Config MQTT**: Automatically detects and uses system credentials from LoxBerry's **MQTT Gateway V2** (`mqttgateway.json` / `.ini`).
+- **Systemd Background Daemon**: Automatically installs and manages a non-root background daemon (`smtp2mqtt.service`) running under the `loxberry` user.
+- **LoxBerry Web Administration**: Integrated HTML/PHP settings UI in the LoxBerry Plugin Manager allowing dynamic configuration of:
+  - **Web UI Port** (to prevent port conflicts)
+  - **SMTP Port**
+  - **Default MQTT Topic & Reset Timers**
+  - **Attachment Saving & Debug Mode**
+- **Native Backup & Restore**: Configuration (`$LBPCFG`), logs (`$LBPLOG`), and saved attachments (`$LBPDATA`) are placed in official LoxBerry plugin directories to guarantee 100% compatibility with LoxBerry Backup/Restore.
+- **1-Click Auto-Update**: Integrated with LoxBerry's update engine via `release.cfg`.
+
+### 📥 Installation on LoxBerry
+
+#### Method A: Direct URL Installation (Recommended)
+1. Open your **LoxBerry Administration** web interface (`http://loxberry.local`).
+2. Go to **Plugin Management** -> **Install Plugin**.
+3. Paste the direct download URL into the **Install from URL** field:
+   ```text
+   https://github.com/onhala/smtp2mqtt/releases/latest/download/smtp2mqtt-loxberry-v1.6.0.zip
+   ```
+4. Click **Install**.
+
+#### Method B: Manual File Upload
+1. Download `smtp2mqtt-loxberry-v1.6.0.zip` from [GitHub Releases](https://github.com/onhala/smtp2mqtt/releases).
+2. Upload the ZIP file in LoxBerry **Plugin Management** and click **Install**.
 
 ---
 

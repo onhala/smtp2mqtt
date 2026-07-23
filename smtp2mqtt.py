@@ -46,10 +46,111 @@ def parse_bool(value: Any) -> bool:
     return str(value).lower() in ("true", "1", "yes", "on")
 
 
-# Load and process configuration
+def get_loxberry_paths() -> Dict[str, str]:
+    """Helper to detect LoxBerry environment variables and plugin directories."""
+    paths = {}
+    lb_home = os.environ.get("LBHOME", "/opt/loxberry" if os.path.exists("/opt/loxberry") else None)
+    if lb_home and os.path.exists(lb_home):
+        paths["LBHOME"] = lb_home
+        paths["LBPDATA"] = os.environ.get("LBPDATA", os.path.join(lb_home, "data", "plugins", "smtp2mqtt"))
+        paths["LBPLOG"] = os.environ.get("LBPLOG", os.path.join(lb_home, "log", "plugins", "smtp2mqtt"))
+        paths["LBPCONFIG"] = os.environ.get("LBPCONFIG", os.path.join(lb_home, "config", "plugins", "smtp2mqtt"))
+        paths["LBPMQTT_JSON"] = os.path.join(lb_home, "config", "system", "mqttgateway.json")
+        paths["LBPMQTT_INI"] = os.path.join(lb_home, "config", "system", "mqttgateway.ini")
+    return paths
+
+
+def load_loxberry_mqtt_config(paths: Dict[str, str]) -> Dict[str, Any]:
+    """Auto-detect MQTT broker configuration from LoxBerry MQTT Gateway V2."""
+    mqtt_cfg = {}
+    mqtt_json = paths.get("LBPMQTT_JSON")
+    mqtt_ini = paths.get("LBPMQTT_INI")
+
+    if mqtt_json and os.path.exists(mqtt_json):
+        try:
+            with open(mqtt_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                main = data.get("Main", data.get("Credentials", data))
+                if "brokeraddress" in main or "mqttserver" in main or "server" in main:
+                    mqtt_cfg["MQTT_HOST"] = main.get("brokeraddress") or main.get("mqttserver") or main.get("server") or "localhost"
+                if "brokerport" in main or "mqttport" in main or "port" in main:
+                    mqtt_cfg["MQTT_PORT"] = main.get("brokerport") or main.get("mqttport") or main.get("port") or 1883
+                if "brokeruser" in main or "mqttuser" in main or "username" in main:
+                    mqtt_cfg["MQTT_USERNAME"] = main.get("brokeruser") or main.get("mqttuser") or main.get("username") or ""
+                if "brokerpass" in main or "mqttpass" in main or "password" in main:
+                    mqtt_cfg["MQTT_PASSWORD"] = main.get("brokerpass") or main.get("mqttpass") or main.get("password") or ""
+        except Exception as e:
+            sys.stderr.write(f"Warning: Failed to load LoxBerry MQTT Gateway JSON config: {e}\n")
+    elif mqtt_ini and os.path.exists(mqtt_ini):
+        try:
+            import configparser
+            parser = configparser.ConfigParser()
+            parser.read(mqtt_ini)
+            section = "Main" if "Main" in parser else ("MQTT" if "MQTT" in parser else None)
+            if section:
+                sec = parser[section]
+                if "brokeraddress" in sec or "mqttserver" in sec or "server" in sec:
+                    mqtt_cfg["MQTT_HOST"] = sec.get("brokeraddress") or sec.get("mqttserver") or sec.get("server") or "localhost"
+                if "brokerport" in sec or "mqttport" in sec or "port" in sec:
+                    mqtt_cfg["MQTT_PORT"] = sec.get("brokerport") or sec.get("mqttport") or sec.get("port") or 1883
+                if "brokeruser" in sec or "mqttuser" in sec or "username" in sec:
+                    mqtt_cfg["MQTT_USERNAME"] = sec.get("brokeruser") or sec.get("mqttuser") or sec.get("username") or ""
+                if "brokerpass" in sec or "mqttpass" in sec or "password" in sec:
+                    mqtt_cfg["MQTT_PASSWORD"] = sec.get("brokerpass") or sec.get("mqttpass") or sec.get("password") or ""
+        except Exception as e:
+            sys.stderr.write(f"Warning: Failed to load LoxBerry MQTT Gateway INI config: {e}\n")
+
+    return mqtt_cfg
+
+
+def load_file_config(paths: Dict[str, str]) -> Dict[str, Any]:
+    """Load configuration from config.json if present in LoxBerry config dir or working dir."""
+    file_cfg = {}
+    config_paths = []
+    if "LBPCONFIG" in paths:
+        config_paths.append(os.path.join(paths["LBPCONFIG"], "config.json"))
+    config_paths.append("config.json")
+
+    for cfg_path in config_paths:
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        file_cfg.update(data)
+                        break
+            except Exception as e:
+                sys.stderr.write(f"Warning: Could not read config file {cfg_path}: {e}\n")
+    return file_cfg
+
+
+loxberry_paths = get_loxberry_paths()
+lb_mqtt_defaults = load_loxberry_mqtt_config(loxberry_paths)
+file_defaults = load_file_config(loxberry_paths)
+
+
+def get_data_dir() -> str:
+    """Returns the base data directory (LBPDATA if in LoxBerry mode, otherwise current dir)."""
+    return loxberry_paths.get("LBPDATA", ".")
+
+
+def get_attachments_dir() -> str:
+    """Returns the attachments directory path."""
+    data_dir = get_data_dir()
+    att_dir = os.path.join(data_dir, "attachments") if data_dir != "." else "attachments"
+    os.makedirs(att_dir, exist_ok=True)
+    return att_dir
+
 config: Dict[str, Any] = {}
 for setting, default_val in defaults.items():
-    env_val = os.environ.get(setting, default_val)
+    # Cascading value resolution
+    val = default_val
+    if setting in lb_mqtt_defaults:
+        val = lb_mqtt_defaults[setting]
+    if setting in file_defaults:
+        val = file_defaults[setting]
+    env_val = os.environ.get(setting, val)
+
     if setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB"):
         config[setting] = parse_bool(env_val)
     elif setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANUP_ATTACHMENTS_DAYS", "CLEANUP_LOGS_DAYS", "CLEANUP_INTERVAL_SECONDS"):
@@ -71,11 +172,14 @@ ch = logging.StreamHandler(sys.stdout)
 ch.setFormatter(formatter)
 log.addHandler(ch)
 
-# Log to file if "log" directory exists
-if os.path.exists("log"):
+# File logging path resolution (LoxBerry log dir prioritized if available)
+log_dir = loxberry_paths.get("LBPLOG") if "LBPLOG" in loxberry_paths else ("log" if os.path.exists("log") else None)
+if log_dir:
     try:
-        log.info("Setting up a file logger at log/smtp2mqtt.log")
-        fh = logging.FileHandler("log/smtp2mqtt.log")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, "smtp2mqtt.log")
+        log.info(f"Setting up file logger at {log_file}")
+        fh = logging.FileHandler(log_file)
         fh.setFormatter(formatter)
         log.addHandler(fh)
     except Exception as e:
@@ -302,8 +406,8 @@ class smtp2mqttHandler:
                     continue
 
                 image_data = part.get_content()
-                os.makedirs("attachments", exist_ok=True)
-                file_path = os.path.join("attachments", safe_filename)
+                att_dir = get_attachments_dir()
+                file_path = os.path.join(att_dir, safe_filename)
                 
                 log.info("Saving attached image '%s' to '%s'", safe_filename, file_path)
                 with open(file_path, "wb") as f:
@@ -422,11 +526,12 @@ class smtp2mqttHandler:
         
         # Cleanup attachments folder
         if config["SAVE_ATTACHMENTS"] and attachments_days > 0:
-            await asyncio.to_thread(self._cleanup_directory, "attachments", attachments_days)
+            await asyncio.to_thread(self._cleanup_directory, get_attachments_dir(), attachments_days)
 
         # Cleanup log folder
         if logs_days > 0:
-            await asyncio.to_thread(self._cleanup_directory, "log", logs_days)
+            log_dir_target = loxberry_paths.get("LBPLOG", "log")
+            await asyncio.to_thread(self._cleanup_directory, log_dir_target, logs_days)
 
     def _cleanup_directory(self, directory: str, max_age_days: int) -> None:
         """Safely scans a directory and deletes files older than max_age_days."""
@@ -1362,7 +1467,7 @@ class smtp2mqttHandler:
             elif path.startswith("/attachments/"):
                 # Safety check against Path Traversal (CWE-22) by extracting only the base filename
                 filename = os.path.basename(path)
-                file_path = os.path.join("attachments", filename)
+                file_path = os.path.join(get_attachments_dir(), filename)
                 
                 # Make sure the file exists and is indeed a file within the 'attachments' directory
                 if os.path.exists(file_path) and os.path.isfile(file_path):

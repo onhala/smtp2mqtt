@@ -1,4 +1,4 @@
-name: Create GitHub Release
+name: Create GitHub Release & LoxBerry Package
 
 on:
   push:
@@ -10,16 +10,56 @@ permissions:
 
 jobs:
   release:
-    name: Create Release
+    name: Create Release & Package LoxBerry Plugin
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract Tag & Version
+        id: vars
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG_NAME#v}
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build LoxBerry Plugin Package
+        run: |
+          chmod +x loxberry-build.sh
+          ./loxberry-build.sh
+
+      - name: Update release.cfg Manifest
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          TAG_NAME="${{ steps.vars.outputs.tag_name }}"
+          cat << EOF > release.cfg
+          [AUTOUPDATE]
+          VERSION=${VERSION}
+          ARCHIVEURL=https://github.com/onhala/smtp2mqtt/releases/download/${TAG_NAME}/smtp2mqtt-loxberry-v${VERSION}.zip
+          INFOURL=https://github.com/onhala/smtp2mqtt/releases/tag/${TAG_NAME}
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          files: |
+            smtp2mqtt-loxberry-v${{ steps.vars.outputs.version }}.zip
+            release.cfg
           generate_release_notes: true
           draft: false
           prerelease: false
+
+      - name: Commit updated release.cfg to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main:main || true
+          git checkout main || true
+          git add release.cfg plugin.cfg
+          git commit -m "chore: update release.cfg and plugin.cfg to ${{ steps.vars.outputs.tag_name }} [skip ci]" || true
+          git push origin main || true
+
