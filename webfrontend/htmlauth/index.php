@@ -519,7 +519,16 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     }
                     echo '</div>';
                 } else {
+                    unset($py_err);
+                    exec("python3 " . escapeshellarg($daemon_script) . " 2>&1", $py_err);
                     echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 12px 16px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data.<br><br><a href="?action=restart_daemon" class="lox-btn-primary">🚀 Spustit / Restartovat Službu smtp2mqtt</a></div>';
+                    if (!empty($py_err)) {
+                        echo '<div class="log-viewer-box" id="log-box">';
+                        foreach ($py_err as $line) {
+                            echo htmlspecialchars($line) . "\n";
+                        }
+                        echo '</div>';
+                    }
                 }
                 ?>
             </div>
