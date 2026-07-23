@@ -4,7 +4,7 @@
 set -e
 
 PLUGIN_NAME="smtp2mqtt"
-VERSION="1.6.0"
+VERSION="1.7.0"
 ZIP_NAME="${PLUGIN_NAME}-loxberry-v${VERSION}.zip"
 
 echo "📦 Packaging LoxBerry Plugin: ${ZIP_NAME}..."

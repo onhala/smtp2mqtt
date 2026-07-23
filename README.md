@@ -24,10 +24,10 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 | Deployment Target | Packaging Format | Best For | Key Highlights |
 | :--- | :--- | :--- | :--- |
 | **🐳 Docker Container** | Multi-arch Docker Image (`ghcr.io/onhala/smtp2mqtt`) | Portainer, Docker Compose, Unraid, TrueNAS, K8s | Non-root `appuser`, env-var configuration, automated Portainer webhooks |
-| **🍊 Native LoxBerry Plugin** | LoxBerry Zip Package (`smtp2mqtt-loxberry-v1.6.0.zip`) | LoxBerry 3.x+ / Loxone Smart Home Server | Zero-config MQTT Gateway V2, systemd daemon, LoxBerry Web Admin UI, 1-click Auto-Update |
+| **🍊 Native LoxBerry Plugin** | LoxBerry Zip Package (`smtp2mqtt-loxberry-v1.7.0.zip`) | LoxBerry 3.x+ / Loxone Smart Home Server | Zero-config MQTT Gateway V2, systemd daemon, LoxBerry Web Admin UI, 1-click Auto-Update |
 
 > [!NOTE]
-> Every release tag (e.g. `v1.6.0`) automatically builds both targets concurrently in GitHub Actions CI pipelines: the Docker image is published to GHCR and the LoxBerry ZIP package is attached to GitHub Release Assets.
+> Every release tag (e.g. `v1.7.0`) automatically builds both targets concurrently in GitHub Actions CI pipelines: the Docker image is published to GHCR and the LoxBerry ZIP package is attached to GitHub Release Assets.
 
 ---
 
@@ -53,12 +53,12 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 2. Go to **Plugin Management** -> **Install Plugin**.
 3. Paste the direct download URL into the **Install from URL** field:
    ```text
-   https://github.com/onhala/smtp2mqtt/releases/latest/download/smtp2mqtt-loxberry-v1.6.0.zip
+   https://github.com/onhala/smtp2mqtt/releases/latest/download/smtp2mqtt-loxberry-v1.7.0.zip
    ```
 4. Click **Install**.
 
 #### Method B: Manual File Upload
-1. Download `smtp2mqtt-loxberry-v1.6.0.zip` from [GitHub Releases](https://github.com/onhala/smtp2mqtt/releases).
+1. Download `smtp2mqtt-loxberry-v1.7.0.zip` from [GitHub Releases](https://github.com/onhala/smtp2mqtt/releases).
 2. Upload the ZIP file in LoxBerry **Plugin Management** and click **Install**.
 
 ---
