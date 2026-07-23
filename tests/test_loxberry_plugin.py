@@ -57,25 +57,26 @@ def test_plugin_cfg_structure_and_validity():
 
 
 def test_release_cfg_structure_and_validity():
-    """Verify that release.cfg follows LoxBerry Auto-Update standards."""
-    cfg_path = os.path.join(PROJECT_ROOT, "release.cfg")
-    assert os.path.exists(cfg_path), "release.cfg must exist in repository root"
+    """Verify that release.cfg and prerelease.cfg follow LoxBerry Auto-Update standards."""
+    for cfg_filename in ["release.cfg", "prerelease.cfg"]:
+        cfg_path = os.path.join(PROJECT_ROOT, cfg_filename)
+        assert os.path.exists(cfg_path), f"{cfg_filename} must exist in repository root"
 
-    with open(cfg_path, "rb") as f:
-        content_bytes = f.read()
-        assert b"\r\n" not in content_bytes, "release.cfg must use Unix LF line endings (no CRLF)"
+        with open(cfg_path, "rb") as f:
+            content_bytes = f.read()
+            assert b"\r\n" not in content_bytes, f"{cfg_filename} must use Unix LF line endings (no CRLF)"
 
-    config = configparser.ConfigParser()
-    config.read(cfg_path, encoding="utf-8")
+        config = configparser.ConfigParser()
+        config.read(cfg_path, encoding="utf-8")
 
-    assert config.has_section("AUTOUPDATE")
-    version = config.get("AUTOUPDATE", "VERSION", fallback="")
-    archive_url = config.get("AUTOUPDATE", "ARCHIVEURL", fallback="")
-    info_url = config.get("AUTOUPDATE", "INFOURL", fallback="")
+        assert config.has_section("AUTOUPDATE")
+        version = config.get("AUTOUPDATE", "VERSION", fallback="")
+        archive_url = config.get("AUTOUPDATE", "ARCHIVEURL", fallback="")
+        info_url = config.get("AUTOUPDATE", "INFOURL", fallback="")
 
-    assert re.match(r"^\d+\.\d+\.\d+$", version), "release.cfg VERSION must be valid semver"
-    assert archive_url.startswith("https://github.com/onhala/smtp2mqtt/releases/download/")
-    assert info_url.startswith("https://github.com/onhala/smtp2mqtt/releases/tag/")
+        assert re.match(r"^\d+\.\d+\.\d+$", version), f"{cfg_filename} VERSION must be valid semver"
+        assert archive_url.startswith("https://github.com/onhala/smtp2mqtt/releases/download/")
+        assert info_url.startswith("https://github.com/onhala/smtp2mqtt/releases/tag/")
 
 
 def test_shell_scripts_syntax_shebang_and_line_endings():
@@ -153,6 +154,7 @@ def test_loxberry_zip_packaging_integrity(tmp_path):
         mandatory_files = [
             "plugin.cfg",
             "release.cfg",
+            "prerelease.cfg",
             "postinstall.sh",
             "preupgrade.sh",
             "postupgrade.sh",

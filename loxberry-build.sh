@@ -22,6 +22,7 @@ chmod +x postinstall.sh preupgrade.sh postupgrade.sh preremove.sh smtp2mqtt.py 2
 zip -r "${ZIP_NAME}" \
     plugin.cfg \
     release.cfg \
+    prerelease.cfg \
     postinstall.sh \
     preupgrade.sh \
     postupgrade.sh \
