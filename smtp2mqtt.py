@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
+import sys
+import os
+import glob
+
+# Ensure LoxBerry site-packages paths are available in sys.path
+for site in glob.glob("/opt/loxberry/.local/lib/python3.*/site-packages") + glob.glob(os.path.expanduser("~/.local/lib/python3.*/site-packages")):
+    if site not in sys.path:
+        sys.path.insert(0, site)
+
 import asyncio
 import email
 import json
 import logging
-import os
 import signal
 import socket
-import sys
 import urllib.request
 import urllib.error
 from datetime import datetime
@@ -186,7 +193,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.5"
+VERSION = "1.8.6"
 
 
 class smtp2mqttHandler:

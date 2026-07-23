@@ -10,10 +10,12 @@ mkdir -p /opt/loxberry/config/plugins/smtp2mqtt
 
 echo "<INFO> Installing Python dependencies for smtp2mqtt..."
 if [ -f "$PLUGIN_DIR/requirements.txt" ]; then
+    pip3 install --user --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || \
+    pip3 install --user -r "$PLUGIN_DIR/requirements.txt" || \
     pip3 install --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || \
     pip3 install -r "$PLUGIN_DIR/requirements.txt" || \
-    python3 -m pip install --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || \
-    python3 -m pip install -r "$PLUGIN_DIR/requirements.txt" || true
+    python3 -m pip install --user --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || \
+    python3 -m pip install --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || true
 fi
 
 echo "<INFO> Setting executable permissions..."
