@@ -8,14 +8,14 @@ mkdir -p /opt/loxberry/log/plugins/smtp2mqtt
 mkdir -p /opt/loxberry/data/plugins/smtp2mqtt
 mkdir -p /opt/loxberry/config/plugins/smtp2mqtt
 
-echo "<INFO> Installing Python dependencies for smtp2mqtt..."
+echo "<INFO> Installing system dependencies via APT..."
+apt-get update -q || true
+apt-get install -y python3-pip python3-aiosmtpd python3-paho-mqtt python3-pil 2>/dev/null || true
+
+echo "<INFO> Installing Python dependencies for smtp2mqtt via pip..."
 if [ -f "$PLUGIN_DIR/requirements.txt" ]; then
-    pip3 install --user --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || \
-    pip3 install --user -r "$PLUGIN_DIR/requirements.txt" || \
-    pip3 install --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || \
-    pip3 install -r "$PLUGIN_DIR/requirements.txt" || \
-    python3 -m pip install --user --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || \
-    python3 -m pip install --break-system-packages -r "$PLUGIN_DIR/requirements.txt" || true
+    pip3 install --break-system-packages -r "$PLUGIN_DIR/requirements.txt" 2>/dev/null || \
+    python3 -m pip install --break-system-packages -r "$PLUGIN_DIR/requirements.txt" 2>/dev/null || true
 fi
 
 echo "<INFO> Setting executable permissions..."
