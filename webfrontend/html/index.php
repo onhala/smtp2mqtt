@@ -113,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
     }
 
     if (file_put_contents($config_file, json_encode($config, JSON_PRETTY_PRINT))) {
-        $message = "Konfigurace byla úspěšně uložena. Restartuji službu smtp2mqtt...";
+        $message = "Konfigurace uložena. Restartuji službu smtp2mqtt...";
         // Restart systemd service
         exec("sudo systemctl restart smtp2mqtt.service 2>&1", $output, $return_var);
     } else {
@@ -271,7 +271,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
         <div class="lox-card">
             <div class="lox-card-header">
                 <h3 class="lox-card-title">⚙️ Konfigurace služby smtp2mqtt</h3>
-                <span class="lox-badge-info">Verze 1.7.3</span>
+                <span class="lox-badge-info">Verze 1.8.1</span>
             </div>
             <div class="lox-card-body">
                 <form method="post" action="?tab=settings" id="config-form">
@@ -443,41 +443,56 @@ $active_tab = $_GET['tab'] ?? 'settings';
         <div class="lox-card">
             <div class="lox-card-header">
                 <div>
-                    <h3 class="lox-card-title">📋 Prohlížeč Logů (smtp2mqtt.log)</h3>
-                    <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #64748b;">Živý log z adresáře pluginu pro ladění a diagnostiku</p>
+                    <h3 class="lox-card-title">📋 Prohlížeč Logů (smtp2mqtt.log & systemd journal)</h3>
+                    <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #64748b;">Živý log z adresáře pluginu i systémové hlášení služby</p>
                 </div>
                 <div style="display: flex; gap: 10px;">
                     <a href="?tab=logs" class="lox-btn-secondary">🔄 Obnovit</a>
-                    <a href="?action=download_log" class="lox-btn-secondary">📥 Stáhnout Log</a>
-                    <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="color: #dc2626;">🧹 Vyčistit</a>
+                    <?php if (file_exists($log_file)): ?>
+                        <a href="?action=download_log" class="lox-btn-secondary">📥 Stáhnout Log</a>
+                        <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="color: #dc2626;">🧹 Vyčistit</a>
+                    <?php endif; ?>
                 </div>
             </div>
             <div class="lox-card-body">
                 <?php
-                if (file_exists($log_file)) {
+                $has_file_log = file_exists($log_file) && filesize($log_file) > 0;
+                if ($has_file_log) {
                     $log_lines = file($log_file);
-                    if (empty($log_lines)) {
-                        echo '<div style="color: #94a3b8; text-align: center; padding: 30px;">Log soubor je aktuálně prázdný.</div>';
-                    } else {
+                    echo '<div class="log-viewer-box" id="log-box">';
+                    foreach ($log_lines as $line) {
+                        $escaped_line = htmlspecialchars($line);
+                        $class = '';
+                        if (strpos($line, 'ERROR') !== false || strpos($line, 'CRITICAL') !== false) {
+                            $class = 'log-line-error';
+                        } elseif (strpos($line, 'WARNING') !== false) {
+                            $class = 'log-line-warn';
+                        } elseif (strpos($line, 'INFO') !== false) {
+                            $class = 'log-line-info';
+                        } elseif (strpos($line, 'DEBUG') !== false) {
+                            $class = 'log-line-debug';
+                        }
+                        echo '<span class="' . $class . '">' . $escaped_line . '</span>';
+                    }
+                    echo '</div>';
+                } else {
+                    echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 10px 14px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data. Zobrazuji systémový log služby (journalctl / systemd):</div>';
+                    unset($journal_output);
+                    exec("sudo journalctl -u smtp2mqtt.service -n 50 --no-pager 2>&1", $journal_output);
+                    if (!empty($journal_output)) {
                         echo '<div class="log-viewer-box" id="log-box">';
-                        foreach ($log_lines as $line) {
+                        foreach ($journal_output as $line) {
                             $escaped_line = htmlspecialchars($line);
                             $class = '';
-                            if (strpos($line, 'ERROR') !== false || strpos($line, 'CRITICAL') !== false) {
+                            if (strpos($line, 'Failed') !== false || strpos($line, 'error') !== false || strpos($line, 'Error') !== false) {
                                 $class = 'log-line-error';
-                            } elseif (strpos($line, 'WARNING') !== false) {
-                                $class = 'log-line-warn';
-                            } elseif (strpos($line, 'INFO') !== false) {
-                                $class = 'log-line-info';
-                            } elseif (strpos($line, 'DEBUG') !== false) {
-                                $class = 'log-line-debug';
                             }
-                            echo '<span class="' . $class . '">' . $escaped_line . '</span>';
+                            echo '<span class="' . $class . '">' . $escaped_line . "\n</span>";
                         }
                         echo '</div>';
+                    } else {
+                        echo '<div style="color: #94a3b8; text-align: center; padding: 30px;">Systémové logy zatím nejsou k dispozici. Ověřte stav služby přes systemctl status smtp2mqtt.service.</div>';
                     }
-                } else {
-                    echo '<div style="color: #94a3b8; text-align: center; padding: 30px;">Log soubor zatím neexistuje (' . htmlspecialchars($log_file) . '). Bude vytvořen po prvním spuštění služby.</div>';
                 }
                 ?>
             </div>
