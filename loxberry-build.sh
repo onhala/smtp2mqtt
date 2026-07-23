@@ -28,6 +28,7 @@ zip -r "${ZIP_NAME}" \
     postupgrade.sh \
     preremove.sh \
     smtp2mqtt.py \
+    bin/ \
     requirements.txt \
     favicon.svg \
     logo.svg \

@@ -10,6 +10,9 @@ $config_dir = $lbpconfigdir;
 $config_file = $config_dir . "/config.json";
 $log_file = $lbplogdir . "/smtp2mqtt.log";
 $daemon_script = $lbpbindir . "/smtp2mqtt.py";
+if (!file_exists($daemon_script) && file_exists($lbpbindir . "/bin/smtp2mqtt.py")) {
+    $daemon_script = $lbpbindir . "/bin/smtp2mqtt.py";
+}
 
 // Default settings
 $defaults = [
