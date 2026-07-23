@@ -9,9 +9,18 @@ $L = LBSystem::readlanguage("language.ini");
 $config_dir = $lbpconfigdir;
 $config_file = $config_dir . "/config.json";
 $log_file = $lbplogdir . "/smtp2mqtt.log";
+$daemon_candidates = [
+    $lbpbindir . "/smtp2mqtt.py",
+    $lbpbindir . "/bin/smtp2mqtt.py",
+    "/opt/loxberry/bin/plugins/smtp2mqtt/smtp2mqtt.py",
+    "/opt/loxberry/bin/plugins/smtp2mqtt/bin/smtp2mqtt.py"
+];
 $daemon_script = $lbpbindir . "/smtp2mqtt.py";
-if (!file_exists($daemon_script) && file_exists($lbpbindir . "/bin/smtp2mqtt.py")) {
-    $daemon_script = $lbpbindir . "/bin/smtp2mqtt.py";
+foreach ($daemon_candidates as $cand) {
+    if (file_exists($cand)) {
+        $daemon_script = $cand;
+        break;
+    }
 }
 
 // Default settings
@@ -522,13 +531,25 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     }
                     echo '</div>';
                 } else {
-                    unset($py_err);
-                    exec("python3 " . escapeshellarg($daemon_script) . " 2>&1", $py_err);
-                    echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 12px 16px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data.<br><br><a href="?action=restart_daemon" class="lox-btn-primary">🚀 Spustit / Restartovat Službu smtp2mqtt</a></div>';
-                    if (!empty($py_err)) {
+                    if (file_exists($daemon_script)) {
+                        unset($py_err);
+                        exec("python3 " . escapeshellarg($daemon_script) . " 2>&1", $py_err);
+                        echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 12px 16px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data.<br><br><a href="?action=restart_daemon" class="lox-btn-primary">🚀 Spustit / Restartovat Službu smtp2mqtt</a></div>';
+                        if (!empty($py_err)) {
+                            echo '<div class="log-viewer-box" id="log-box">';
+                            foreach ($py_err as $line) {
+                                echo htmlspecialchars($line) . "\n";
+                            }
+                            echo '</div>';
+                        }
+                    } else {
+                        echo '<div style="margin-bottom: 12px; font-weight: 600; color: #dc2626; background: #fef2f2; padding: 12px 16px; border-radius: 6px; border: 1px solid #fecaca;">❌ Soubor smtp2mqtt.py nebyl nalezen v ' . htmlspecialchars($lbpbindir) . '</div>';
                         echo '<div class="log-viewer-box" id="log-box">';
-                        foreach ($py_err as $line) {
-                            echo htmlspecialchars($line) . "\n";
+                        echo "Obsah adresáře " . $lbpbindir . ":\n";
+                        if (is_dir($lbpbindir)) {
+                            print_r(scandir($lbpbindir));
+                        } else {
+                            echo "Adresář neexistuje!\n";
                         }
                         echo '</div>';
                     }
