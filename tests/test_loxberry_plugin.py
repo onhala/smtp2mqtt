@@ -48,6 +48,7 @@ def test_plugin_cfg_structure_and_validity():
     # Required fields in [SYSTEM]
     assert config.get("SYSTEM", "INTERFACE", fallback="") == "2.0"
     assert config.get("SYSTEM", "LB_MIN", fallback="") != ""
+    assert config.get("SYSTEM", "LB_MINIMUM", fallback="") != ""
 
     # Required fields in [AUTOUPDATE]
     assert config.getboolean("AUTOUPDATE", "AUTOMATIC_UPDATES") is True
