@@ -30,6 +30,7 @@ zip -r "${ZIP_NAME}" \
     requirements.txt \
     favicon.svg \
     logo.svg \
+    icons/ \
     webfrontend/ \
     -x "*.pyc" "__pycache__/*" ".git/*" ".venv/*" ".pytest_cache/*" "tests/*" "deploy/*" "docs/*" ".coverage"
 

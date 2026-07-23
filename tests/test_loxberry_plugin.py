@@ -51,8 +51,8 @@ def test_plugin_cfg_structure_and_validity():
 
     # Required fields in [AUTOUPDATE]
     assert config.getboolean("AUTOUPDATE", "AUTOMATIC_UPDATES") is True
-    assert config.get("AUTOUPDATE", "RELEASEURL", fallback="").startswith("https://")
-    assert config.get("AUTOUPDATE", "PRERELEASEURL", fallback="").startswith("https://")
+    assert config.get("AUTOUPDATE", "RELEASECFG", fallback="").startswith("https://")
+    assert config.get("AUTOUPDATE", "PRERELEASECFG", fallback="").startswith("https://")
 
 
 def test_release_cfg_structure_and_validity():
@@ -158,7 +158,12 @@ def test_loxberry_zip_packaging_integrity(tmp_path):
             "preremove.sh",
             "smtp2mqtt.py",
             "requirements.txt",
+            "icons/icon_64.png",
+            "icons/icon_128.png",
+            "icons/icon_256.png",
+            "icons/icon_512.png",
             "webfrontend/html/index.php",
         ]
         for mandatory in mandatory_files:
             assert mandatory in file_list, f"ZIP package is missing required file: {mandatory}"
+
