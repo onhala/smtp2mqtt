@@ -186,7 +186,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.7.3"
+VERSION = "1.8.0"
 
 
 class smtp2mqttHandler:
@@ -798,6 +798,21 @@ class smtp2mqttHandler:
             --system-color: #f0883e;       /* Warm orange for system actions */
             --system-glow: rgba(240, 136, 62, 0.12);
         }
+        body.theme-loxberry, html[data-theme="loxberry"] {
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --border-color: #e2e8f0;
+            --border-focus: #cbd5e1;
+            --text-primary: #0f172a;
+            --text-secondary: #334155;
+            --text-muted: #64748b;
+            --accent-primary: #6fb738;
+            --accent-glow: rgba(111, 183, 56, 0.15);
+            --accent-hover: #5ea02f;
+            --success: #2e7d32;
+            --danger: #dc2626;
+            --system-color: #d97706;
+        }
         * {
             box-sizing: border-box;
             margin: 0;
@@ -1256,6 +1271,12 @@ class smtp2mqttHandler:
     </div>
 
     <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('theme') === 'loxberry') {
+            document.documentElement.setAttribute('data-theme', 'loxberry');
+            document.body.classList.add('theme-loxberry');
+        }
+
         function escapeHtml(str) {
             if (!str) return '';
             return String(str)
