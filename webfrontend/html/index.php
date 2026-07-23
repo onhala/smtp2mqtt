@@ -8,7 +8,18 @@ $L = LBSystem::readlanguage("language.ini");
 // Define paths
 $config_dir = $lbpconfigdir;
 $config_file = $config_dir . "/config.json";
+$log_candidates = [
+    $lbplogdir . "/smtp2mqtt.log",
+    "/opt/loxberry/log/plugins/smtp2mqtt.log",
+    "/opt/loxberry/log/plugins/smtp2mqtt/smtp2mqtt.log"
+];
 $log_file = $lbplogdir . "/smtp2mqtt.log";
+foreach ($log_candidates as $l_cand) {
+    if (file_exists($l_cand) && filesize($l_cand) > 0) {
+        $log_file = $l_cand;
+        break;
+    }
+}
 $daemon_candidates = [
     $lbpbindir . "/smtp2mqtt.py",
     $lbpbindir . "/bin/smtp2mqtt.py",
