@@ -52,6 +52,14 @@ WantedBy=multi-user.target
 EOF
 
 $SUDO_CMD chmod 644 "$SERVICE_FILE" 2>/dev/null || true
+
+echo "<INFO> Configuring sudoers NOPASSWD permissions for LoxBerry user..."
+SUDOERS_FILE="/etc/sudoers.d/smtp2mqtt"
+$SUDO_CMD tee "$SUDOERS_FILE" > /dev/null << EOF
+loxberry ALL=(ALL) NOPASSWD: /bin/systemctl restart smtp2mqtt.service, /bin/systemctl start smtp2mqtt.service, /bin/systemctl stop smtp2mqtt.service, /bin/systemctl status smtp2mqtt.service, /usr/bin/systemctl restart smtp2mqtt.service, /usr/bin/systemctl start smtp2mqtt.service, /usr/bin/systemctl stop smtp2mqtt.service, /usr/bin/systemctl status smtp2mqtt.service, /bin/journalctl, /usr/bin/journalctl
+EOF
+$SUDO_CMD chmod 0440 "$SUDOERS_FILE" 2>/dev/null || true
+
 $SUDO_CMD systemctl daemon-reload 2>/dev/null || true
 $SUDO_CMD systemctl enable smtp2mqtt.service 2>/dev/null || true
 $SUDO_CMD systemctl restart smtp2mqtt.service 2>/dev/null || true

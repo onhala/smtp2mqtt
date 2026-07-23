@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
     if (file_put_contents($config_file, json_encode($config, JSON_PRETTY_PRINT))) {
         $message = "Konfigurace uložena. Restartuji službu smtp2mqtt...";
         // Restart systemd service
-        exec("sudo systemctl restart smtp2mqtt.service 2>&1", $output, $return_var);
+        exec("sudo -n systemctl restart smtp2mqtt.service 2>&1 || systemctl restart smtp2mqtt.service 2>&1", $output, $return_var);
     } else {
         $message = "Chyba při zápisu do konfiguračního souboru!";
         $message_type = "danger";
@@ -478,7 +478,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 } else {
                     echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 10px 14px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data. Zobrazuji systémový log služby (journalctl / systemd):</div>';
                     unset($journal_output);
-                    exec("sudo journalctl -u smtp2mqtt.service -n 50 --no-pager 2>&1", $journal_output);
+                    exec("sudo -n journalctl -u smtp2mqtt.service -n 50 --no-pager 2>&1 || journalctl -u smtp2mqtt.service -n 50 --no-pager 2>&1", $journal_output);
                     if (!empty($journal_output)) {
                         echo '<div class="log-viewer-box" id="log-box">';
                         foreach ($journal_output as $line) {
