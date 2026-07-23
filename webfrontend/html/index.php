@@ -9,6 +9,7 @@ $L = LBSystem::readlanguage("language.ini");
 $config_dir = $lbpconfigdir;
 $config_file = $config_dir . "/config.json";
 $log_file = $lbplogdir . "/smtp2mqtt.log";
+$daemon_script = $lbpbindir . "/smtp2mqtt.py";
 
 // Default settings
 $defaults = [
@@ -53,8 +54,15 @@ if (file_exists($lb_mqtt_file)) {
     }
 }
 
-// Handle Log Actions (Download / Clear)
+// Handle Log & Daemon Actions (Start / Stop / Restart / Download / Clear)
 if (isset($_GET['action'])) {
+    if ($_GET['action'] === 'restart_daemon') {
+        exec("pkill -f smtp2mqtt.py 2>&1");
+        sleep(1);
+        exec("nohup python3 " . escapeshellarg($daemon_script) . " > /dev/null 2>&1 &");
+        header('Location: index.php?tab=logs&started=1');
+        exit;
+    }
     if ($_GET['action'] === 'download_log' && file_exists($log_file)) {
         header('Content-Type: text/plain');
         header('Content-Disposition: attachment; filename="smtp2mqtt.log"');
@@ -114,12 +122,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
 
     if (file_put_contents($config_file, json_encode($config, JSON_PRETTY_PRINT))) {
         $message = "Konfigurace uložena. Restartuji službu smtp2mqtt...";
-        // Restart systemd service
-        exec("sudo -n systemctl restart smtp2mqtt.service 2>&1 || systemctl restart smtp2mqtt.service 2>&1", $output, $return_var);
+        // Restart daemon process without sudo
+        exec("pkill -f smtp2mqtt.py 2>&1");
+        sleep(1);
+        exec("nohup python3 " . escapeshellarg($daemon_script) . " > /dev/null 2>&1 &");
     } else {
         $message = "Chyba při zápisu do konfiguračního souboru!";
         $message_type = "danger";
     }
+}
+
+// Check daemon process status
+$is_running = false;
+unset($pgrep_out);
+exec("pgrep -f smtp2mqtt.py", $pgrep_out);
+if (!empty($pgrep_out)) {
+    $is_running = true;
 }
 
 // Output LoxBerry Header
@@ -226,6 +244,22 @@ $active_tab = $_GET['tab'] ?? 'settings';
         font-size: 0.82rem;
         font-weight: 600;
     }
+    .lox-badge-success {
+        background: #dcfce7;
+        color: #15803d;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+    .lox-badge-danger {
+        background: #fee2e2;
+        color: #b91c1c;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
     .log-viewer-box {
         background: #0f172a;
         color: #f8fafc;
@@ -270,8 +304,15 @@ $active_tab = $_GET['tab'] ?? 'settings';
         <!-- Settings Form Tab -->
         <div class="lox-card">
             <div class="lox-card-header">
-                <h3 class="lox-card-title">⚙️ Konfigurace služby smtp2mqtt</h3>
-                <span class="lox-badge-info">Verze 1.8.1</span>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <h3 class="lox-card-title">⚙️ Konfigurace služby smtp2mqtt</h3>
+                    <?php if ($is_running): ?>
+                        <span class="lox-badge-success">🟢 Služba Běží</span>
+                    <?php else: ?>
+                        <span class="lox-badge-danger">🔴 Služba Zastavena</span>
+                    <?php endif; ?>
+                </div>
+                <span class="lox-badge-info">Verze 1.8.3</span>
             </div>
             <div class="lox-card-body">
                 <form method="post" action="?tab=settings" id="config-form">
@@ -371,8 +412,9 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         </label>
                     </div>
 
-                    <div style="margin-top: 25px; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+                    <div style="margin-top: 25px; border-top: 1px solid #e2e8f0; padding-top: 15px; display: flex; gap: 15px; align-items: center;">
                         <button type="submit" name="save_settings" class="lox-btn-primary">💾 Uložit & Restartovat Službu</button>
+                        <a href="?action=restart_daemon" class="lox-btn-secondary">🔄 Vynutit Restart Služby</a>
                     </div>
                 </form>
             </div>
@@ -443,11 +485,12 @@ $active_tab = $_GET['tab'] ?? 'settings';
         <div class="lox-card">
             <div class="lox-card-header">
                 <div>
-                    <h3 class="lox-card-title">📋 Prohlížeč Logů (smtp2mqtt.log & systemd journal)</h3>
-                    <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #64748b;">Živý log z adresáře pluginu i systémové hlášení služby</p>
+                    <h3 class="lox-card-title">📋 Prohlížeč Logů (smtp2mqtt.log)</h3>
+                    <p style="margin: 4px 0 0 0; font-size: 0.85rem; color: #64748b;">Živý log z adresáře pluginu pro ladění a diagnostiku</p>
                 </div>
                 <div style="display: flex; gap: 10px;">
                     <a href="?tab=logs" class="lox-btn-secondary">🔄 Obnovit</a>
+                    <a href="?action=restart_daemon" class="lox-btn-secondary" style="color: #0284c7;">🚀 Spustit Službu</a>
                     <?php if (file_exists($log_file)): ?>
                         <a href="?action=download_log" class="lox-btn-secondary">📥 Stáhnout Log</a>
                         <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="color: #dc2626;">🧹 Vyčistit</a>
@@ -476,23 +519,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     }
                     echo '</div>';
                 } else {
-                    echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 10px 14px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data. Zobrazuji systémový log služby (journalctl / systemd):</div>';
-                    unset($journal_output);
-                    exec("sudo -n journalctl -u smtp2mqtt.service -n 50 --no-pager 2>&1 || journalctl -u smtp2mqtt.service -n 50 --no-pager 2>&1", $journal_output);
-                    if (!empty($journal_output)) {
-                        echo '<div class="log-viewer-box" id="log-box">';
-                        foreach ($journal_output as $line) {
-                            $escaped_line = htmlspecialchars($line);
-                            $class = '';
-                            if (strpos($line, 'Failed') !== false || strpos($line, 'error') !== false || strpos($line, 'Error') !== false) {
-                                $class = 'log-line-error';
-                            }
-                            echo '<span class="' . $class . '">' . $escaped_line . "\n</span>";
-                        }
-                        echo '</div>';
-                    } else {
-                        echo '<div style="color: #94a3b8; text-align: center; padding: 30px;">Systémové logy zatím nejsou k dispozici. Ověřte stav služby přes systemctl status smtp2mqtt.service.</div>';
-                    }
+                    echo '<div style="margin-bottom: 12px; font-weight: 600; color: #d97706; background: #fffbebf; padding: 12px 16px; border-radius: 6px; border: 1px solid #fef3c7;">⚠️ Soubor logů smtp2mqtt.log zatím neobsahuje žádná data.<br><br><a href="?action=restart_daemon" class="lox-btn-primary">🚀 Spustit / Restartovat Službu smtp2mqtt</a></div>';
                 }
                 ?>
             </div>
