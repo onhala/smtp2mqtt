@@ -163,6 +163,7 @@ def test_loxberry_zip_packaging_integrity(tmp_path):
             "icons/icon_256.png",
             "icons/icon_512.png",
             "webfrontend/html/index.php",
+            "webfrontend/htmlauth/index.php",
         ]
         for mandatory in mandatory_files:
             assert mandatory in file_list, f"ZIP package is missing required file: {mandatory}"
