@@ -473,9 +473,10 @@ def test_main_function_graceful_run_and_exit():
     mock_server = mock.MagicMock()
     
     # We mock asyncio.new_event_loop to return our mock loop and mock start_server
+    target_mod = getattr(smtp2mqtt, "_legacy_mod", smtp2mqtt)
     with mock.patch("asyncio.new_event_loop", return_value=mock_loop), \
          mock.patch("asyncio.start_server", return_value=mock_server), \
-         mock.patch("smtp2mqtt.UnthreadedController") as mock_controller_cls:
+         mock.patch.object(target_mod, "UnthreadedController") as mock_controller_cls:
         
         mock_controller = mock_controller_cls.return_value
         
