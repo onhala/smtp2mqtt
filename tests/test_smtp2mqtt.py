@@ -334,37 +334,34 @@ async def test_smtp2mqtt_handler_handle_data_parse_error():
 
 @pytest.mark.asyncio
 async def test_smtp2mqtt_handler_save_attachments_during_reset_time_logic():
-    """Verify SAVE_ATTACHMENTS_DURING_RESET_TIME config handles file saving rules properly when triggered."""
+    """Verify SAVE_ATTACHMENTS config handles file saving rules properly when triggered."""
     loop = asyncio.get_running_loop()
     handler = smtp2mqtt.smtp2mqttHandler(loop)
     
-    smtp2mqtt.config["SAVE_ATTACHMENTS"] = True
-    
+    # 1. SAVE_ATTACHMENTS = False -> skip saving
+    smtp2mqtt.config["SAVE_ATTACHMENTS"] = False
     envelope = mock.MagicMock()
     envelope.mail_from = "sender@domain.com"
     envelope.original_content = b"From: sender@domain.com\nTo: rcpt@domain.com\nSubject: Test\n\nBody"
-    envelope.content = b"From: sender@domain.com\nTo: rcpt@domain.com\nSubject: Test\n\nBody"
-    
-    # 1. Topic already triggered, SAVE_ATTACHMENTS_DURING_RESET_TIME = False -> skip saving
-    smtp2mqtt.config["SAVE_ATTACHMENTS_DURING_RESET_TIME"] = False
-    handler.handles["smtp2mqtt/sender-domain.com"] = mock.MagicMock()
-    
+
     with mock.patch.object(handler, "mqtt_publish"), \
          mock.patch.object(handler, "save_attachments") as mock_save:
         await handler.handle_DATA(None, None, envelope)
+        if handler.background_tasks:
+            await asyncio.gather(*handler.background_tasks)
         mock_save.assert_not_called()
-        
-    # 2. Topic already triggered, SAVE_ATTACHMENTS_DURING_RESET_TIME = True -> save
-    smtp2mqtt.config["SAVE_ATTACHMENTS_DURING_RESET_TIME"] = True
+
+    # 2. SAVE_ATTACHMENTS = True (even if already triggered) -> save attachment
+    smtp2mqtt.config["SAVE_ATTACHMENTS"] = True
     handler.handles["smtp2mqtt/sender-domain.com"] = mock.MagicMock()
-    
+
     with mock.patch.object(handler, "mqtt_publish"), \
          mock.patch.object(handler, "save_attachments") as mock_save:
         await handler.handle_DATA(None, None, envelope)
         if handler.background_tasks:
             await asyncio.gather(*handler.background_tasks)
         mock_save.assert_called_once()
-        
+
     handler.cancel_all_resets()
 
 @pytest.mark.asyncio
@@ -1973,6 +1970,63 @@ def test_mqtt_disconnect_callbacks():
     # Simulate a disconnection callback
     handler._on_mqtt_disconnect(None, None, None, 1)
     assert handler.mqtt_connected_status is False
+
+
+@pytest.mark.asyncio
+async def test_variant_b_sliding_window_reset_and_ms_scaling():
+    """Verify Issue #1 fix: Reset time is scaled from ms to seconds for asyncio call_later,
+    and receiving multiple messages during reset time extends the reset window (Variant B)
+    without sending duplicate ON payloads to MQTT."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    handler.reset_time = 200  # 200 ms
+
+    envelope = mock.MagicMock()
+    envelope.mail_from = "camera1@home.com"
+    envelope.original_content = b"Subject: Motion detected\n\nMotion in zone 1"
+
+    with mock.patch.object(handler, "mqtt_publish") as mock_pub:
+        # First message: Topic is NOT in reset state -> sends ON payload and schedules timer for 0.200 seconds
+        res1 = await handler.handle_DATA(None, None, envelope)
+        assert res1 == "250 Message accepted for delivery"
+        assert mock_pub.call_count == 1
+        mock_pub.assert_called_with("smtp2mqtt/camera1-home.com", "ON", "trigger", "camera1@home.com")
+
+        # Verify call_later argument is 0.2 seconds (200 ms / 1000)
+        assert loop.call_later.call_count == 1
+        call_args = loop.call_later.call_args
+        assert abs(call_args[0][0] - 0.2) < 1e-4
+
+        # Save timer handle mock
+        timer_handle_mock = mock.MagicMock()
+        handler.handles["smtp2mqtt/camera1-home.com"] = timer_handle_mock
+
+        # Second message received while reset timer is ACTIVE (Variant B)
+        res2 = await handler.handle_DATA(None, None, envelope)
+        assert res2 == "250 Message accepted for delivery"
+
+        # Should NOT publish a second ON to MQTT (mock_pub count remains 1)
+        assert mock_pub.call_count == 1
+
+        # Old timer handle must be cancelled
+        timer_handle_mock.cancel.assert_called_once()
+
+        # A new timer should be scheduled (call_later count increased to 2)
+        assert loop.call_later.call_count == 2
+        call_args2 = loop.call_later.call_args
+        assert abs(call_args2[0][0] - 0.2) < 1e-4
+
+
+@pytest.mark.asyncio
+async def test_version_check_disabled_in_loxberry_environment():
+    """Verify Issue #2 fix: Version check loop is disabled when running inside LoxBerry."""
+    loop = mock.MagicMock()
+    
+    with mock.patch.dict(smtp2mqtt.loxberry_paths, {"LBHOME": "/opt/loxberry"}):
+        handler = smtp2mqtt.smtp2mqttHandler(loop)
+        await handler.check_version_updates_loop()
+        assert handler.version_check_status == "disabled_loxberry"
+
 
 
 

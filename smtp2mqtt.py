@@ -78,7 +78,7 @@ defaults: Dict[str, Union[str, int]] = {
     "MQTT_PASSWORD": "",
     "MQTT_TOPIC": "smtp2mqtt",
     "MQTT_PAYLOAD": "ON",
-    "MQTT_RESET_TIME": "10",
+    "MQTT_RESET_TIME": "200",
     "MQTT_RESET_PAYLOAD": "OFF",
     "SAVE_ATTACHMENTS": "False",
     "SAVE_ATTACHMENTS_DURING_RESET_TIME": "False",
@@ -415,16 +415,19 @@ class smtp2mqttHandler:
         )
         topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
 
-        # Publish the primary payload asynchronously (in a thread executor to not block loop)
-        log.debug("Dispatching MQTT publish for trigger payload...")
-        await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
-
-        # Determine whether to save attachments
+        # Check if topic is currently triggered (in reset time window)
         is_triggered = topic in self.handles
-        should_save = config["SAVE_ATTACHMENTS"] and (
-            not is_triggered or config["SAVE_ATTACHMENTS_DURING_RESET_TIME"]
-        )
 
+        if not is_triggered:
+            # Publish primary ON payload only if not already triggered
+            log.debug("Dispatching MQTT publish for trigger payload...")
+            await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
+        else:
+            log.info("Topic %s is already in triggered state. Extending reset timer (Variant B) without duplicate ON publish.", topic)
+            self.log_action("trigger (extended)", mail_from, topic, config["MQTT_PAYLOAD"], True)
+
+        # Determine whether to save attachments - always save if enabled
+        should_save = config["SAVE_ATTACHMENTS"]
         if should_save:
             log.debug("Dispatching background attachment save task...")
             # Schedule non-blocking background task to parse email and save attachments
@@ -433,18 +436,19 @@ class smtp2mqttHandler:
             )
             self.background_tasks.add(task)
         else:
-            log.debug("Skipping attachment storage (disabled or reset time constraint)")
+            log.debug("Skipping attachment storage (disabled in config)")
 
-        # Cancel any pending reset timers for this topic
+        # Cancel existing reset timer if active and reschedule for new window (sliding window)
         if topic in self.handles:
             log.debug("Cancelling existing reset timer for topic: %s", topic)
             self.handles.pop(topic).cancel()
 
-        # Schedule a new reset timer if reset time is non-zero
+        # Schedule a new reset timer in seconds (self.reset_time is in milliseconds)
         if self.reset_time > 0:
-            log.debug("Scheduling topic reset in %d seconds: %s", self.reset_time, topic)
+            reset_time_seconds = self.reset_time / 1000.0
+            log.debug("Scheduling topic reset in %.3f seconds (%d ms): %s", reset_time_seconds, self.reset_time, topic)
             self.handles[topic] = self.loop.call_later(
-                self.reset_time, self._trigger_reset, topic
+                reset_time_seconds, self._trigger_reset, topic
             )
 
         return "250 Message accepted for delivery"
@@ -669,7 +673,12 @@ class smtp2mqttHandler:
             log.error("Failed to scan directory '%s' for cleanup: %s", directory, scan_error)
 
     async def check_version_updates_loop(self) -> None:
-        """Periodically checks GitHub API for newer container versions."""
+        """Periodically checks GitHub API for newer container versions (disabled in LoxBerry environment)."""
+        if loxberry_paths.get("LBHOME"):
+            log.info("LoxBerry environment detected. Skipping automatic GitHub version check (managed by LoxBerry Plugin Manager).")
+            self.version_check_status = "disabled_loxberry"
+            return
+
         # Initial safety delay to ensure startup is unblocked and fast
         await asyncio.sleep(2)
         log.info("Starting periodic version check task (interval: 24h)")

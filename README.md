@@ -85,7 +85,7 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 | `MQTT_PASSWORD` | Password for the MQTT broker (optional) | `""` |
 | `MQTT_TOPIC` | Root prefix for published MQTT topics | `smtp2mqtt` |
 | `MQTT_PAYLOAD` | Payload published when an email is received (Trigger) | `ON` |
-| `MQTT_RESET_TIME` | Delay in seconds before resetting the topic (`0` to disable) | `10` |
+| `MQTT_RESET_TIME` | Delay in milliseconds before resetting the topic (`0` to disable) | `200` |
 | `MQTT_RESET_PAYLOAD` | Payload published when the reset timer expires | `OFF` |
 | `SAVE_ATTACHMENTS` | Whether to extract and save attached image snapshots | `False` |
 | `SAVE_ATTACHMENTS_DURING_RESET_TIME` | Save images from emails arriving while reset timer is active | `False` |
