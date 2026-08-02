@@ -232,7 +232,7 @@ for setting in defaults.keys():
 use_lb_mqtt = parse_bool(config.get("USE_LOXBERRY_MQTT", True))
 if use_lb_mqtt and lb_mqtt_defaults:
     for k in ("MQTT_HOST", "MQTT_PORT", "MQTT_USERNAME", "MQTT_PASSWORD"):
-        if k in lb_mqtt_defaults and lb_mqtt_defaults[k] is not None:
+        if k in lb_mqtt_defaults and lb_mqtt_defaults[k] not in (None, ""):
             config[k] = lb_mqtt_defaults[k]
 
 for setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB", "USE_LOXBERRY_MQTT"):
@@ -302,7 +302,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.21"
+VERSION = "1.8.22"
 
 
 class smtp2mqttHandler:

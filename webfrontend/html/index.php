@@ -205,14 +205,14 @@ if (isset($_GET['action'])) {
     if ($act === 'test_mqtt') {
         header('Content-Type: application/json; charset=utf-8');
         $use_lb = ($config['USE_LOXBERRY_MQTT'] === "True" || $config['USE_LOXBERRY_MQTT'] === true);
-        if ($use_lb && !empty($detected_mqtt['MQTT_HOST'])) {
+        if ($use_lb && !empty($detected_mqtt['MQTT_HOST']) && !empty($detected_mqtt['MQTT_USERNAME'])) {
             $mqtt_host = $detected_mqtt['MQTT_HOST'];
             $mqtt_port = $detected_mqtt['MQTT_PORT'];
             $mqtt_user = $detected_mqtt['MQTT_USERNAME'];
             $mqtt_pass = $detected_mqtt['MQTT_PASSWORD'];
         } else {
-            $mqtt_host = $config['MQTT_HOST'] ?? 'localhost';
-            $mqtt_port = intval($config['MQTT_PORT'] ?? 1883);
+            $mqtt_host = !empty($config['MQTT_HOST']) ? $config['MQTT_HOST'] : ($detected_mqtt['MQTT_HOST'] ?? 'localhost');
+            $mqtt_port = intval(!empty($config['MQTT_PORT']) ? $config['MQTT_PORT'] : ($detected_mqtt['MQTT_PORT'] ?? 1883));
             $mqtt_user = $config['MQTT_USERNAME'] ?? '';
             $mqtt_pass = $config['MQTT_PASSWORD'] ?? '';
         }
@@ -329,10 +329,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         $config['USE_LOXBERRY_MQTT'] = $use_auto ? "True" : "False";
 
         if ($use_auto) {
-            $config['MQTT_HOST'] = $detected_mqtt['MQTT_HOST'];
-            $config['MQTT_PORT'] = $detected_mqtt['MQTT_PORT'];
-            $config['MQTT_USERNAME'] = $detected_mqtt['MQTT_USERNAME'];
-            $config['MQTT_PASSWORD'] = $detected_mqtt['MQTT_PASSWORD'];
+            $config['MQTT_HOST'] = !empty($detected_mqtt['MQTT_HOST']) ? $detected_mqtt['MQTT_HOST'] : trim($_POST['mqtt_host'] ?? 'localhost');
+            $config['MQTT_PORT'] = !empty($detected_mqtt['MQTT_PORT']) ? $detected_mqtt['MQTT_PORT'] : intval($_POST['mqtt_port'] ?? 1883);
+            $config['MQTT_USERNAME'] = !empty($detected_mqtt['MQTT_USERNAME']) ? $detected_mqtt['MQTT_USERNAME'] : trim($_POST['mqtt_username'] ?? '');
+            $config['MQTT_PASSWORD'] = !empty($detected_mqtt['MQTT_PASSWORD']) ? $detected_mqtt['MQTT_PASSWORD'] : ($_POST['mqtt_password'] ?? '');
         } else {
             $config['MQTT_HOST'] = trim($_POST['mqtt_host'] ?? 'localhost');
             $config['MQTT_PORT'] = intval($_POST['mqtt_port'] ?? 1883);
