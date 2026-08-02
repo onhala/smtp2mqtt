@@ -39,3 +39,16 @@ Run the full pytest test suite:
 ```bash
 pytest tests/ -v
 ```
+
+---
+
+## 📦 LoxBerry Packaging & AutoUpdate Standards
+
+For LoxBerry plugin development, AutoUpdate rules, path policies, and security guidelines, see [AGENTS.md](AGENTS.md).
+
+### Quick Build Script
+To package the plugin as a LoxBerry zip archive:
+```bash
+bash loxberry-build.sh
+```
+This generates `smtp2mqtt-loxberry-v<version>.zip` ready for LoxBerry installation.
