@@ -114,42 +114,50 @@ def get_loxberry_paths() -> Dict[str, str]:
 
 
 def load_loxberry_mqtt_config(paths: Dict[str, str]) -> Dict[str, Any]:
-    """Auto-detect MQTT broker configuration from LoxBerry MQTT Gateway V2."""
+    """Auto-detect MQTT broker configuration from LoxBerry MQTT Gateway V2 / Mosquitto."""
     mqtt_cfg = {}
     mqtt_json = paths.get("LBPMQTT_JSON")
     mqtt_ini = paths.get("LBPMQTT_INI")
+
+    def _extract_from_dict(d: dict):
+        # Look in current level
+        user_keys = ["brokeruser", "mqttuser", "user", "username", "BrokerUser", "MQTTUser"]
+        pass_keys = ["brokerpass", "mqttpass", "pass", "password", "BrokerPass", "MQTTPass"]
+        host_keys = ["brokeraddress", "mqttserver", "server", "host", "BrokerAddress", "MQTTServer"]
+        port_keys = ["brokerport", "mqttport", "port", "BrokerPort", "MQTTPort"]
+
+        for k, v in d.items():
+            if isinstance(v, dict):
+                _extract_from_dict(v)
+            else:
+                if k in user_keys and v and "MQTT_USERNAME" not in mqtt_cfg:
+                    mqtt_cfg["MQTT_USERNAME"] = str(v)
+                if k in pass_keys and v and "MQTT_PASSWORD" not in mqtt_cfg:
+                    mqtt_cfg["MQTT_PASSWORD"] = str(v)
+                if k in host_keys and v and "MQTT_HOST" not in mqtt_cfg:
+                    mqtt_cfg["MQTT_HOST"] = str(v)
+                if k in port_keys and v and "MQTT_PORT" not in mqtt_cfg:
+                    try:
+                        mqtt_cfg["MQTT_PORT"] = int(v)
+                    except ValueError:
+                        pass
 
     if mqtt_json and os.path.exists(mqtt_json):
         try:
             with open(mqtt_json, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                main = data.get("Main", data.get("Credentials", data))
-                if "brokeraddress" in main or "mqttserver" in main or "server" in main:
-                    mqtt_cfg["MQTT_HOST"] = main.get("brokeraddress") or main.get("mqttserver") or main.get("server") or "localhost"
-                if "brokerport" in main or "mqttport" in main or "port" in main:
-                    mqtt_cfg["MQTT_PORT"] = main.get("brokerport") or main.get("mqttport") or main.get("port") or 1883
-                if "brokeruser" in main or "mqttuser" in main or "username" in main:
-                    mqtt_cfg["MQTT_USERNAME"] = main.get("brokeruser") or main.get("mqttuser") or main.get("username") or ""
-                if "brokerpass" in main or "mqttpass" in main or "password" in main:
-                    mqtt_cfg["MQTT_PASSWORD"] = main.get("brokerpass") or main.get("mqttpass") or main.get("password") or ""
+                if isinstance(data, dict):
+                    _extract_from_dict(data)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load LoxBerry MQTT Gateway JSON config: {e}\n")
-    elif mqtt_ini and os.path.exists(mqtt_ini):
+
+    if mqtt_ini and os.path.exists(mqtt_ini) and not (mqtt_cfg.get("MQTT_USERNAME") and mqtt_cfg.get("MQTT_PASSWORD")):
         try:
             import configparser
             parser = configparser.ConfigParser()
             parser.read(mqtt_ini)
-            section = "Main" if "Main" in parser else ("MQTT" if "MQTT" in parser else None)
-            if section:
-                sec = parser[section]
-                if "brokeraddress" in sec or "mqttserver" in sec or "server" in sec:
-                    mqtt_cfg["MQTT_HOST"] = sec.get("brokeraddress") or sec.get("mqttserver") or sec.get("server") or "localhost"
-                if "brokerport" in sec or "mqttport" in sec or "port" in sec:
-                    mqtt_cfg["MQTT_PORT"] = sec.get("brokerport") or sec.get("mqttport") or sec.get("port") or 1883
-                if "brokeruser" in sec or "mqttuser" in sec or "username" in sec:
-                    mqtt_cfg["MQTT_USERNAME"] = sec.get("brokeruser") or sec.get("mqttuser") or sec.get("username") or ""
-                if "brokerpass" in sec or "mqttpass" in sec or "password" in sec:
-                    mqtt_cfg["MQTT_PASSWORD"] = sec.get("brokerpass") or sec.get("mqttpass") or sec.get("password") or ""
+            ini_dict = {sec: dict(parser[sec]) for sec in parser.sections()}
+            _extract_from_dict(ini_dict)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load LoxBerry MQTT Gateway INI config: {e}\n")
 
@@ -201,18 +209,28 @@ for setting, default_val in defaults.items():
     if setting in lb_mqtt_defaults:
         val = lb_mqtt_defaults[setting]
     if setting in file_defaults:
-        val = file_defaults[setting]
-    env_val = os.environ.get(setting, val)
+        # Don't overwrite auto-detected LoxBerry MQTT credentials with empty strings from file_defaults
+        if setting in ("MQTT_USERNAME", "MQTT_PASSWORD") and not file_defaults[setting] and val:
+            pass
+        else:
+            val = file_defaults[setting]
+    
+    env_val = os.environ.get(setting)
+    if env_val is not None:
+        if setting in ("MQTT_USERNAME", "MQTT_PASSWORD") and env_val == "" and val:
+            pass
+        else:
+            val = env_val
 
     if setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB"):
-        config[setting] = parse_bool(env_val)
+        config[setting] = parse_bool(val)
     elif setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANUP_ATTACHMENTS_DAYS", "CLEANUP_LOGS_DAYS", "CLEANUP_INTERVAL_SECONDS"):
         try:
-            config[setting] = int(env_val)
+            config[setting] = int(val)
         except ValueError:
             config[setting] = int(default_val)
     else:
-        config[setting] = env_val
+        config[setting] = val
 
 # Logging configuration
 level = logging.DEBUG if config["DEBUG"] else logging.INFO
@@ -239,7 +257,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.17"
+VERSION = "1.8.18"
 
 
 class smtp2mqttHandler:
@@ -268,13 +286,18 @@ class smtp2mqttHandler:
         else:
             self._mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
             if config["MQTT_USERNAME"]:
+                log.info(f"MQTT authentication configured for user '{config['MQTT_USERNAME']}'")
                 self._mqtt_client.username_pw_set(config["MQTT_USERNAME"], config["MQTT_PASSWORD"])
+            else:
+                log.warning("No MQTT username configured. Connecting to broker without authentication.")
+
             self._mqtt_client.on_connect = self._on_mqtt_connect
             self._mqtt_client.on_disconnect = self._on_mqtt_disconnect
             
             # Start background thread loop and initiate asynchronous connection
             self._mqtt_client.loop_start()
             try:
+                log.info(f"Connecting to MQTT broker at {config['MQTT_HOST']}:{config['MQTT_PORT']}...")
                 self._mqtt_client.connect_async(config["MQTT_HOST"], config["MQTT_PORT"], keepalive=60)
             except Exception as e:
                 log.error("Failed to connect_async to MQTT broker: %s", e)
