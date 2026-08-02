@@ -98,13 +98,26 @@ if (file_exists($lb_mqtt_file)) {
         $detected_mqtt['MQTT_PORT'] = $port;
         $detected_mqtt['MQTT_USERNAME'] = $user;
         $detected_mqtt['MQTT_PASSWORD'] = $pass;
-
-        $defaults['MQTT_HOST'] = $detected_mqtt['MQTT_HOST'];
-        $defaults['MQTT_PORT'] = $detected_mqtt['MQTT_PORT'];
-        $defaults['MQTT_USERNAME'] = $detected_mqtt['MQTT_USERNAME'];
-        $defaults['MQTT_PASSWORD'] = $detected_mqtt['MQTT_PASSWORD'];
     }
 }
+
+$lb_mqtt_ini = $lbsysconfigdir . "/mqttgateway.ini";
+if ((empty($detected_mqtt['MQTT_USERNAME']) || empty($detected_mqtt['MQTT_PASSWORD'])) && file_exists($lb_mqtt_ini)) {
+    $ini_data = @parse_ini_file($lb_mqtt_ini, true);
+    if (is_array($ini_data)) {
+        $main = $ini_data['Main'] ?? $ini_data['MQTT'] ?? [];
+        $creds = $ini_data['Credentials'] ?? $ini_data['Main'] ?? [];
+        if (!empty($main['brokeraddress'])) $detected_mqtt['MQTT_HOST'] = $main['brokeraddress'];
+        if (!empty($main['brokerport'])) $detected_mqtt['MQTT_PORT'] = intval($main['brokerport']);
+        if (!empty($creds['brokeruser'])) $detected_mqtt['MQTT_USERNAME'] = $creds['brokeruser'];
+        if (!empty($creds['brokerpass'])) $detected_mqtt['MQTT_PASSWORD'] = $creds['brokerpass'];
+    }
+}
+
+$defaults['MQTT_HOST'] = $detected_mqtt['MQTT_HOST'];
+$defaults['MQTT_PORT'] = $detected_mqtt['MQTT_PORT'];
+$defaults['MQTT_USERNAME'] = $detected_mqtt['MQTT_USERNAME'];
+$defaults['MQTT_PASSWORD'] = $detected_mqtt['MQTT_PASSWORD'];
 
 // Read current config
 $config = $defaults;
