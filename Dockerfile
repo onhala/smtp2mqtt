@@ -1,19 +1,20 @@
 FROM python:3.13-slim
 
-
 # Set non-buffered output for real-time logs
 ENV PYTHONUNBUFFERED=1
 
 # Version and metadata labels for Portainer/Docker
-ENV VERSION=1.6.0
-LABEL version="1.6.0"
-LABEL org.opencontainers.image.version="1.6.0"
+ENV VERSION=1.8.18
+LABEL version="1.8.18"
+LABEL org.opencontainers.image.version="1.8.18"
 LABEL org.opencontainers.image.source="https://github.com/onhala/smtp2mqtt"
 
 WORKDIR /app
 
-# Create a non-privileged system user first and set up directories
-RUN useradd -u 10001 -U -M -s /bin/false appuser && \
+# Install git/ca-certificates and create non-privileged system user
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -u 10001 -U -M -s /bin/false appuser && \
     mkdir -p log attachments && \
     chown -R appuser:appuser /app
 
@@ -37,5 +38,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run the app
 ENTRYPOINT ["/app/smtp2mqtt.py"]
-
-
