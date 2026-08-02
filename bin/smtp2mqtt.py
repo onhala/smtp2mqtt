@@ -102,9 +102,10 @@ def parse_bool(value: Any) -> bool:
 def get_loxberry_paths() -> Dict[str, str]:
     """Helper to detect LoxBerry environment variables and plugin directories."""
     paths = {}
-    lb_home = os.environ.get("LBHOME", "/opt/loxberry" if os.path.exists("/opt/loxberry") else None)
+    lb_home = os.environ.get("LBHOMEDIR") or os.environ.get("LBHOME") or ("/opt/loxberry" if os.path.exists("/opt/loxberry") else None)
     if lb_home and os.path.exists(lb_home):
         paths["LBHOME"] = lb_home
+        paths["LBHOMEDIR"] = lb_home
         paths["LBPDATA"] = os.environ.get("LBPDATA", os.path.join(lb_home, "data", "plugins", "smtp2mqtt"))
         paths["LBPLOG"] = os.environ.get("LBPLOG", os.path.join(lb_home, "log", "plugins", "smtp2mqtt"))
         paths["LBPCONFIG"] = os.environ.get("LBPCONFIG", os.path.join(lb_home, "config", "plugins", "smtp2mqtt"))
@@ -218,33 +219,30 @@ def get_attachments_dir() -> str:
 
 config: Dict[str, Any] = {}
 for setting, default_val in defaults.items():
-    # Cascading value resolution
-    val = default_val
-    if setting in lb_mqtt_defaults:
-        val = lb_mqtt_defaults[setting]
-    if setting in file_defaults:
-        # Don't overwrite auto-detected LoxBerry MQTT credentials with empty strings from file_defaults
-        if setting in ("MQTT_USERNAME", "MQTT_PASSWORD") and not file_defaults[setting] and val:
-            pass
-        else:
-            val = file_defaults[setting]
-    
+    config[setting] = default_val
+
+for setting, file_val in file_defaults.items():
+    config[setting] = file_val
+
+for setting in defaults.keys():
     env_val = os.environ.get(setting)
     if env_val is not None:
-        if setting in ("MQTT_USERNAME", "MQTT_PASSWORD") and env_val == "" and val:
-            pass
-        else:
-            val = env_val
+        config[setting] = env_val
 
-    if setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB"):
-        config[setting] = parse_bool(val)
-    elif setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANUP_ATTACHMENTS_DAYS", "CLEANUP_LOGS_DAYS", "CLEANUP_INTERVAL_SECONDS"):
-        try:
-            config[setting] = int(val)
-        except ValueError:
-            config[setting] = int(default_val)
-    else:
-        config[setting] = val
+use_lb_mqtt = parse_bool(config.get("USE_LOXBERRY_MQTT", True))
+if use_lb_mqtt and lb_mqtt_defaults:
+    for k in ("MQTT_HOST", "MQTT_PORT", "MQTT_USERNAME", "MQTT_PASSWORD"):
+        if k in lb_mqtt_defaults and lb_mqtt_defaults[k] is not None:
+            config[k] = lb_mqtt_defaults[k]
+
+for setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB", "USE_LOXBERRY_MQTT"):
+    config[setting] = parse_bool(config.get(setting, defaults.get(setting, False)))
+
+for setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANUP_ATTACHMENTS_DAYS", "CLEANUP_LOGS_DAYS", "CLEANUP_INTERVAL_SECONDS"):
+    try:
+        config[setting] = int(config[setting])
+    except (ValueError, TypeError):
+        config[setting] = int(defaults.get(setting, 0))
 
 # Logging configuration
 level = logging.DEBUG if config["DEBUG"] else logging.INFO
@@ -271,7 +269,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.19"
+VERSION = "1.8.20"
 
 
 class smtp2mqttHandler:
