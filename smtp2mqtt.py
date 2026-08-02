@@ -120,7 +120,6 @@ def load_loxberry_mqtt_config(paths: Dict[str, str]) -> Dict[str, Any]:
     mqtt_ini = paths.get("LBPMQTT_INI")
 
     def _extract_from_dict(d: dict):
-        # Look in current level
         user_keys = ["brokeruser", "mqttuser", "user", "username", "BrokerUser", "MQTTUser"]
         pass_keys = ["brokerpass", "mqttpass", "pass", "password", "BrokerPass", "MQTTPass"]
         host_keys = ["brokeraddress", "mqttserver", "server", "host", "BrokerAddress", "MQTTServer"]
@@ -147,7 +146,22 @@ def load_loxberry_mqtt_config(paths: Dict[str, str]) -> Dict[str, Any]:
             with open(mqtt_json, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    _extract_from_dict(data)
+                    main = data.get("Main", {})
+                    creds = data.get("Credentials", {})
+                    if "brokeraddress" in main:
+                        mqtt_cfg["MQTT_HOST"] = str(main["brokeraddress"])
+                    if "brokerport" in main:
+                        try:
+                            mqtt_cfg["MQTT_PORT"] = int(main["brokerport"])
+                        except ValueError:
+                            pass
+                    if "brokeruser" in creds and creds["brokeruser"]:
+                        mqtt_cfg["MQTT_USERNAME"] = str(creds["brokeruser"])
+                    if "brokerpass" in creds and creds["brokerpass"]:
+                        mqtt_cfg["MQTT_PASSWORD"] = str(creds["brokerpass"])
+
+                    if "MQTT_HOST" not in mqtt_cfg or "MQTT_USERNAME" not in mqtt_cfg:
+                        _extract_from_dict(data)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load LoxBerry MQTT Gateway JSON config: {e}\n")
 
@@ -257,7 +271,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.18"
+VERSION = "1.8.19"
 
 
 class smtp2mqttHandler:
@@ -364,12 +378,17 @@ class smtp2mqttHandler:
     def save_status_file(self) -> None:
         """Saves current status JSON to status.json on disk for PHP WebAdmin."""
         data_dir = get_data_dir()
-        status_file = os.path.join(data_dir, "status.json")
         try:
+            os.makedirs(data_dir, exist_ok=True)
+            status_file = os.path.join(data_dir, "status.json")
             with open(status_file, "w", encoding="utf-8") as f:
                 json.dump(self.get_status_json(), f, indent=2)
+            try:
+                os.chmod(status_file, 0o666)
+            except Exception:
+                pass
         except Exception as e:
-            log.debug("Failed to write status.json: %s", e)
+            log.error("Failed to write status.json: %s", e)
 
     def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any = None) -> None:
         if rc == 0:
@@ -779,25 +798,27 @@ class smtp2mqttHandler:
         log.info("Starting MQTT broker connectivity monitor for %s:%d", host, port)
         while True:
             try:
-                is_available = await asyncio.to_thread(self._check_socket_connection, host, port)
+                is_socket_open = await asyncio.to_thread(self._check_socket_connection, host, port)
                 
                 if self.mqtt_connected_status is None:
-                    # Initial state
-                    self.mqtt_connected_status = is_available
-                    if is_available:
-                        log.info("Initial MQTT connectivity check: Online")
+                    if self._mqtt_client is None or not is_socket_open:
+                        self.mqtt_connected_status = is_socket_open
+                        if is_socket_open:
+                            log.info("Initial MQTT connectivity check: Online")
+                        else:
+                            log.warning("Initial MQTT connectivity check: Offline (Broker at %s:%d is unreachable)", host, port)
+                            self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
+                else:
+                    if not is_socket_open:
+                        if self.mqtt_connected_status is not False:
+                            self.mqtt_connected_status = False
+                            log.warning("MQTT broker at %s:%d is offline (Unreachable)", host, port)
+                            self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
                     else:
-                        log.warning("Initial MQTT connectivity check: Offline (Broker at %s:%d is unreachable)", host, port)
-                        self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
-                elif self.mqtt_connected_status != is_available:
-                    # Change in state
-                    self.mqtt_connected_status = is_available
-                    if is_available:
-                        log.info("MQTT broker at %s:%d has reconnected (Online)", host, port)
-                        self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Online (Reconnected)", True)
-                    else:
-                        log.warning("MQTT broker at %s:%d is offline (Unreachable)", host, port)
-                        self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
+                        if self._mqtt_client is None and not self.mqtt_connected_status:
+                            self.mqtt_connected_status = True
+                            log.info("MQTT broker at %s:%d has reconnected (Online)", host, port)
+                            self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Online (Reconnected)", True)
             except Exception as e:
                 log.error("Error in MQTT broker monitor: %s", e)
             

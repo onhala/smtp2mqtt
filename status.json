@@ -8,13 +8,13 @@
   "smtp_connected": false,
   "smtp_status_text": "Inactive",
   "last_publish_success": true,
-  "last_publish_time": "2026-08-02 14:41:47",
+  "last_publish_time": "2026-08-02 14:58:39",
   "processed_messages_count": 1,
   "uptime_seconds": 0,
   "uptime_formatted": "0s",
   "recent_actions": [
     {
-      "timestamp": "2026-08-02 14:41:47",
+      "timestamp": "2026-08-02 14:58:39",
       "type": "trigger (extended)",
       "sender": "camera1@home.com",
       "topic": "smtp2mqtt/camera1-home.com",

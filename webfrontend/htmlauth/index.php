@@ -85,12 +85,19 @@ $detected_mqtt = [
 ];
 if (file_exists($lb_mqtt_file)) {
     $mqtt_data = json_decode(file_get_contents($lb_mqtt_file), true);
-    $main = $mqtt_data['Main'] ?? $mqtt_data['Credentials'] ?? $mqtt_data ?? [];
-    if (!empty($main['brokeraddress']) || !empty($main['mqttserver'])) {
-        $detected_mqtt['MQTT_HOST'] = $main['brokeraddress'] ?? $main['mqttserver'] ?? "localhost";
-        $detected_mqtt['MQTT_PORT'] = intval($main['brokerport'] ?? $main['mqttport'] ?? 1883);
-        $detected_mqtt['MQTT_USERNAME'] = $main['brokeruser'] ?? $main['mqttuser'] ?? "";
-        $detected_mqtt['MQTT_PASSWORD'] = $main['brokerpass'] ?? $main['mqttpass'] ?? "";
+    if (is_array($mqtt_data)) {
+        $main = $mqtt_data['Main'] ?? [];
+        $creds = $mqtt_data['Credentials'] ?? [];
+        
+        $host = $main['brokeraddress'] ?? $main['mqttserver'] ?? $mqtt_data['brokeraddress'] ?? "localhost";
+        $port = intval($main['brokerport'] ?? $main['mqttport'] ?? $mqtt_data['brokerport'] ?? 1883);
+        $user = $creds['brokeruser'] ?? $main['brokeruser'] ?? $mqtt_data['brokeruser'] ?? "";
+        $pass = $creds['brokerpass'] ?? $main['brokerpass'] ?? $mqtt_data['brokerpass'] ?? "";
+
+        $detected_mqtt['MQTT_HOST'] = $host;
+        $detected_mqtt['MQTT_PORT'] = $port;
+        $detected_mqtt['MQTT_USERNAME'] = $user;
+        $detected_mqtt['MQTT_PASSWORD'] = $pass;
 
         $defaults['MQTT_HOST'] = $detected_mqtt['MQTT_HOST'];
         $defaults['MQTT_PORT'] = $detected_mqtt['MQTT_PORT'];
@@ -112,7 +119,21 @@ if (file_exists($config_file)) {
 // Handle Clean AJAX JSON Endpoint
 if (isset($_GET['_ajax']) && $_GET['_ajax'] === 'json') {
     header('Content-Type: application/json; charset=utf-8');
+    $status_candidates = [
+        $lbpdatadir . "/status.json",
+        "/opt/loxberry/data/plugins/smtp2mqtt/status.json",
+        "/opt/loxberry/data/plugins/smtp2mqtt/data/status.json",
+        $lbpconfigdir . "/status.json",
+        __DIR__ . "/status.json",
+        "./status.json"
+    ];
     $status_file = $lbpdatadir . "/status.json";
+    foreach ($status_candidates as $s_cand) {
+        if (file_exists($s_cand) && filesize($s_cand) > 0) {
+            $status_file = $s_cand;
+            break;
+        }
+    }
     $status_data = file_exists($status_file) ? json_decode(file_get_contents($status_file), true) : null;
     
     $is_running = false;
@@ -588,9 +609,9 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Auto-Reset Čas (sec):</label>
-                            <input type="number" name="mqtt_reset_time" value="<?php echo htmlspecialchars($config['MQTT_RESET_TIME']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
-                            <span class="field-hint">Po kolika sekundách se stav automaticky vrátí na OFF.</span>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Auto-Reset Čas (ms):</label>
+                            <input type="number" name="mqtt_reset_time" value="<?php echo htmlspecialchars($config['MQTT_RESET_TIME']); ?>" required min="0" step="10" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <span class="field-hint">Po kolika milisekundách se stav automaticky vrátí na OFF (výchozí: 200 ms). Zadejte 0 pro vypnutí resetu.</span>
                         </div>
 
                         <div>

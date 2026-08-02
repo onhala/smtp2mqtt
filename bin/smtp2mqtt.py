@@ -78,7 +78,7 @@ defaults: Dict[str, Union[str, int]] = {
     "MQTT_PASSWORD": "",
     "MQTT_TOPIC": "smtp2mqtt",
     "MQTT_PAYLOAD": "ON",
-    "MQTT_RESET_TIME": "10",
+    "MQTT_RESET_TIME": "200",
     "MQTT_RESET_PAYLOAD": "OFF",
     "SAVE_ATTACHMENTS": "False",
     "SAVE_ATTACHMENTS_DURING_RESET_TIME": "False",
@@ -114,42 +114,64 @@ def get_loxberry_paths() -> Dict[str, str]:
 
 
 def load_loxberry_mqtt_config(paths: Dict[str, str]) -> Dict[str, Any]:
-    """Auto-detect MQTT broker configuration from LoxBerry MQTT Gateway V2."""
+    """Auto-detect MQTT broker configuration from LoxBerry MQTT Gateway V2 / Mosquitto."""
     mqtt_cfg = {}
     mqtt_json = paths.get("LBPMQTT_JSON")
     mqtt_ini = paths.get("LBPMQTT_INI")
+
+    def _extract_from_dict(d: dict):
+        user_keys = ["brokeruser", "mqttuser", "user", "username", "BrokerUser", "MQTTUser"]
+        pass_keys = ["brokerpass", "mqttpass", "pass", "password", "BrokerPass", "MQTTPass"]
+        host_keys = ["brokeraddress", "mqttserver", "server", "host", "BrokerAddress", "MQTTServer"]
+        port_keys = ["brokerport", "mqttport", "port", "BrokerPort", "MQTTPort"]
+
+        for k, v in d.items():
+            if isinstance(v, dict):
+                _extract_from_dict(v)
+            else:
+                if k in user_keys and v and "MQTT_USERNAME" not in mqtt_cfg:
+                    mqtt_cfg["MQTT_USERNAME"] = str(v)
+                if k in pass_keys and v and "MQTT_PASSWORD" not in mqtt_cfg:
+                    mqtt_cfg["MQTT_PASSWORD"] = str(v)
+                if k in host_keys and v and "MQTT_HOST" not in mqtt_cfg:
+                    mqtt_cfg["MQTT_HOST"] = str(v)
+                if k in port_keys and v and "MQTT_PORT" not in mqtt_cfg:
+                    try:
+                        mqtt_cfg["MQTT_PORT"] = int(v)
+                    except ValueError:
+                        pass
 
     if mqtt_json and os.path.exists(mqtt_json):
         try:
             with open(mqtt_json, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                main = data.get("Main", data.get("Credentials", data))
-                if "brokeraddress" in main or "mqttserver" in main or "server" in main:
-                    mqtt_cfg["MQTT_HOST"] = main.get("brokeraddress") or main.get("mqttserver") or main.get("server") or "localhost"
-                if "brokerport" in main or "mqttport" in main or "port" in main:
-                    mqtt_cfg["MQTT_PORT"] = main.get("brokerport") or main.get("mqttport") or main.get("port") or 1883
-                if "brokeruser" in main or "mqttuser" in main or "username" in main:
-                    mqtt_cfg["MQTT_USERNAME"] = main.get("brokeruser") or main.get("mqttuser") or main.get("username") or ""
-                if "brokerpass" in main or "mqttpass" in main or "password" in main:
-                    mqtt_cfg["MQTT_PASSWORD"] = main.get("brokerpass") or main.get("mqttpass") or main.get("password") or ""
+                if isinstance(data, dict):
+                    main = data.get("Main", {})
+                    creds = data.get("Credentials", {})
+                    if "brokeraddress" in main:
+                        mqtt_cfg["MQTT_HOST"] = str(main["brokeraddress"])
+                    if "brokerport" in main:
+                        try:
+                            mqtt_cfg["MQTT_PORT"] = int(main["brokerport"])
+                        except ValueError:
+                            pass
+                    if "brokeruser" in creds and creds["brokeruser"]:
+                        mqtt_cfg["MQTT_USERNAME"] = str(creds["brokeruser"])
+                    if "brokerpass" in creds and creds["brokerpass"]:
+                        mqtt_cfg["MQTT_PASSWORD"] = str(creds["brokerpass"])
+
+                    if "MQTT_HOST" not in mqtt_cfg or "MQTT_USERNAME" not in mqtt_cfg:
+                        _extract_from_dict(data)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load LoxBerry MQTT Gateway JSON config: {e}\n")
-    elif mqtt_ini and os.path.exists(mqtt_ini):
+
+    if mqtt_ini and os.path.exists(mqtt_ini) and not (mqtt_cfg.get("MQTT_USERNAME") and mqtt_cfg.get("MQTT_PASSWORD")):
         try:
             import configparser
             parser = configparser.ConfigParser()
             parser.read(mqtt_ini)
-            section = "Main" if "Main" in parser else ("MQTT" if "MQTT" in parser else None)
-            if section:
-                sec = parser[section]
-                if "brokeraddress" in sec or "mqttserver" in sec or "server" in sec:
-                    mqtt_cfg["MQTT_HOST"] = sec.get("brokeraddress") or sec.get("mqttserver") or sec.get("server") or "localhost"
-                if "brokerport" in sec or "mqttport" in sec or "port" in sec:
-                    mqtt_cfg["MQTT_PORT"] = sec.get("brokerport") or sec.get("mqttport") or sec.get("port") or 1883
-                if "brokeruser" in sec or "mqttuser" in sec or "username" in sec:
-                    mqtt_cfg["MQTT_USERNAME"] = sec.get("brokeruser") or sec.get("mqttuser") or sec.get("username") or ""
-                if "brokerpass" in sec or "mqttpass" in sec or "password" in sec:
-                    mqtt_cfg["MQTT_PASSWORD"] = sec.get("brokerpass") or sec.get("mqttpass") or sec.get("password") or ""
+            ini_dict = {sec: dict(parser[sec]) for sec in parser.sections()}
+            _extract_from_dict(ini_dict)
         except Exception as e:
             sys.stderr.write(f"Warning: Failed to load LoxBerry MQTT Gateway INI config: {e}\n")
 
@@ -201,18 +223,28 @@ for setting, default_val in defaults.items():
     if setting in lb_mqtt_defaults:
         val = lb_mqtt_defaults[setting]
     if setting in file_defaults:
-        val = file_defaults[setting]
-    env_val = os.environ.get(setting, val)
+        # Don't overwrite auto-detected LoxBerry MQTT credentials with empty strings from file_defaults
+        if setting in ("MQTT_USERNAME", "MQTT_PASSWORD") and not file_defaults[setting] and val:
+            pass
+        else:
+            val = file_defaults[setting]
+    
+    env_val = os.environ.get(setting)
+    if env_val is not None:
+        if setting in ("MQTT_USERNAME", "MQTT_PASSWORD") and env_val == "" and val:
+            pass
+        else:
+            val = env_val
 
     if setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB"):
-        config[setting] = parse_bool(env_val)
+        config[setting] = parse_bool(val)
     elif setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANUP_ATTACHMENTS_DAYS", "CLEANUP_LOGS_DAYS", "CLEANUP_INTERVAL_SECONDS"):
         try:
-            config[setting] = int(env_val)
+            config[setting] = int(val)
         except ValueError:
             config[setting] = int(default_val)
     else:
-        config[setting] = env_val
+        config[setting] = val
 
 # Logging configuration
 level = logging.DEBUG if config["DEBUG"] else logging.INFO
@@ -239,7 +271,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.17"
+VERSION = "1.8.19"
 
 
 class smtp2mqttHandler:
@@ -268,13 +300,18 @@ class smtp2mqttHandler:
         else:
             self._mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
             if config["MQTT_USERNAME"]:
+                log.info(f"MQTT authentication configured for user '{config['MQTT_USERNAME']}'")
                 self._mqtt_client.username_pw_set(config["MQTT_USERNAME"], config["MQTT_PASSWORD"])
+            else:
+                log.warning("No MQTT username configured. Connecting to broker without authentication.")
+
             self._mqtt_client.on_connect = self._on_mqtt_connect
             self._mqtt_client.on_disconnect = self._on_mqtt_disconnect
             
             # Start background thread loop and initiate asynchronous connection
             self._mqtt_client.loop_start()
             try:
+                log.info(f"Connecting to MQTT broker at {config['MQTT_HOST']}:{config['MQTT_PORT']}...")
                 self._mqtt_client.connect_async(config["MQTT_HOST"], config["MQTT_PORT"], keepalive=60)
             except Exception as e:
                 log.error("Failed to connect_async to MQTT broker: %s", e)
@@ -341,12 +378,17 @@ class smtp2mqttHandler:
     def save_status_file(self) -> None:
         """Saves current status JSON to status.json on disk for PHP WebAdmin."""
         data_dir = get_data_dir()
-        status_file = os.path.join(data_dir, "status.json")
         try:
+            os.makedirs(data_dir, exist_ok=True)
+            status_file = os.path.join(data_dir, "status.json")
             with open(status_file, "w", encoding="utf-8") as f:
                 json.dump(self.get_status_json(), f, indent=2)
+            try:
+                os.chmod(status_file, 0o666)
+            except Exception:
+                pass
         except Exception as e:
-            log.debug("Failed to write status.json: %s", e)
+            log.error("Failed to write status.json: %s", e)
 
     def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any = None) -> None:
         if rc == 0:
@@ -415,16 +457,19 @@ class smtp2mqttHandler:
         )
         topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
 
-        # Publish the primary payload asynchronously (in a thread executor to not block loop)
-        log.debug("Dispatching MQTT publish for trigger payload...")
-        await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
-
-        # Determine whether to save attachments
+        # Check if topic is currently triggered (in reset time window)
         is_triggered = topic in self.handles
-        should_save = config["SAVE_ATTACHMENTS"] and (
-            not is_triggered or config["SAVE_ATTACHMENTS_DURING_RESET_TIME"]
-        )
 
+        if not is_triggered:
+            # Publish primary ON payload only if not already triggered
+            log.debug("Dispatching MQTT publish for trigger payload...")
+            await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
+        else:
+            log.info("Topic %s is already in triggered state. Extending reset timer (Variant B) without duplicate ON publish.", topic)
+            self.log_action("trigger (extended)", mail_from, topic, config["MQTT_PAYLOAD"], True)
+
+        # Determine whether to save attachments - always save if enabled
+        should_save = config["SAVE_ATTACHMENTS"]
         if should_save:
             log.debug("Dispatching background attachment save task...")
             # Schedule non-blocking background task to parse email and save attachments
@@ -433,18 +478,19 @@ class smtp2mqttHandler:
             )
             self.background_tasks.add(task)
         else:
-            log.debug("Skipping attachment storage (disabled or reset time constraint)")
+            log.debug("Skipping attachment storage (disabled in config)")
 
-        # Cancel any pending reset timers for this topic
+        # Cancel existing reset timer if active and reschedule for new window (sliding window)
         if topic in self.handles:
             log.debug("Cancelling existing reset timer for topic: %s", topic)
             self.handles.pop(topic).cancel()
 
-        # Schedule a new reset timer if reset time is non-zero
+        # Schedule a new reset timer in seconds (self.reset_time is in milliseconds)
         if self.reset_time > 0:
-            log.debug("Scheduling topic reset in %d seconds: %s", self.reset_time, topic)
+            reset_time_seconds = self.reset_time / 1000.0
+            log.debug("Scheduling topic reset in %.3f seconds (%d ms): %s", reset_time_seconds, self.reset_time, topic)
             self.handles[topic] = self.loop.call_later(
-                self.reset_time, self._trigger_reset, topic
+                reset_time_seconds, self._trigger_reset, topic
             )
 
         return "250 Message accepted for delivery"
@@ -669,7 +715,12 @@ class smtp2mqttHandler:
             log.error("Failed to scan directory '%s' for cleanup: %s", directory, scan_error)
 
     async def check_version_updates_loop(self) -> None:
-        """Periodically checks GitHub API for newer container versions."""
+        """Periodically checks GitHub API for newer container versions (disabled in LoxBerry environment)."""
+        if loxberry_paths.get("LBHOME"):
+            log.info("LoxBerry environment detected. Skipping automatic GitHub version check (managed by LoxBerry Plugin Manager).")
+            self.version_check_status = "disabled_loxberry"
+            return
+
         # Initial safety delay to ensure startup is unblocked and fast
         await asyncio.sleep(2)
         log.info("Starting periodic version check task (interval: 24h)")
@@ -747,25 +798,27 @@ class smtp2mqttHandler:
         log.info("Starting MQTT broker connectivity monitor for %s:%d", host, port)
         while True:
             try:
-                is_available = await asyncio.to_thread(self._check_socket_connection, host, port)
+                is_socket_open = await asyncio.to_thread(self._check_socket_connection, host, port)
                 
                 if self.mqtt_connected_status is None:
-                    # Initial state
-                    self.mqtt_connected_status = is_available
-                    if is_available:
-                        log.info("Initial MQTT connectivity check: Online")
+                    if self._mqtt_client is None or not is_socket_open:
+                        self.mqtt_connected_status = is_socket_open
+                        if is_socket_open:
+                            log.info("Initial MQTT connectivity check: Online")
+                        else:
+                            log.warning("Initial MQTT connectivity check: Offline (Broker at %s:%d is unreachable)", host, port)
+                            self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
+                else:
+                    if not is_socket_open:
+                        if self.mqtt_connected_status is not False:
+                            self.mqtt_connected_status = False
+                            log.warning("MQTT broker at %s:%d is offline (Unreachable)", host, port)
+                            self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
                     else:
-                        log.warning("Initial MQTT connectivity check: Offline (Broker at %s:%d is unreachable)", host, port)
-                        self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
-                elif self.mqtt_connected_status != is_available:
-                    # Change in state
-                    self.mqtt_connected_status = is_available
-                    if is_available:
-                        log.info("MQTT broker at %s:%d has reconnected (Online)", host, port)
-                        self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Online (Reconnected)", True)
-                    else:
-                        log.warning("MQTT broker at %s:%d is offline (Unreachable)", host, port)
-                        self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Offline (Unreachable)", False)
+                        if self._mqtt_client is None and not self.mqtt_connected_status:
+                            self.mqtt_connected_status = True
+                            log.info("MQTT broker at %s:%d has reconnected (Online)", host, port)
+                            self.log_action("system", "system", f"MQTT Broker ({host}:{port})", "Online (Reconnected)", True)
             except Exception as e:
                 log.error("Error in MQTT broker monitor: %s", e)
             
