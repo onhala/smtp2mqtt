@@ -8,4 +8,6 @@ log/
 .env
 .DS_Store
 *.zip
+status.json
+
 
