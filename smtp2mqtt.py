@@ -244,8 +244,41 @@ for setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANU
     except (ValueError, TypeError):
         config[setting] = int(defaults.get(setting, 0))
 
+def get_loxberry_loglevel(paths: Dict[str, str]) -> Optional[int]:
+    """Reads LoxBerry system log level from plugin.cfg if available."""
+    cfg_dir = paths.get("LBPCONFIG")
+    if not cfg_dir:
+        return None
+    pcfg = os.path.join(cfg_dir, "plugin.cfg")
+    if os.path.exists(pcfg):
+        try:
+            import configparser
+            parser = configparser.ConfigParser()
+            parser.read(pcfg)
+            if "PLUGIN" in parser and "LOGLEVEL" in parser["PLUGIN"]:
+                return int(parser["PLUGIN"]["LOGLEVEL"])
+            if "SYSTEM" in parser and "LOGLEVEL" in parser["SYSTEM"]:
+                return int(parser["SYSTEM"]["LOGLEVEL"])
+        except Exception:
+            pass
+    return None
+
 # Logging configuration
-level = logging.DEBUG if config["DEBUG"] else logging.INFO
+lb_loglevel = get_loxberry_loglevel(loxberry_paths)
+if lb_loglevel is not None:
+    if lb_loglevel >= 7:
+        level = logging.DEBUG
+    elif lb_loglevel >= 4:
+        level = logging.INFO
+    elif lb_loglevel >= 1:
+        level = logging.ERROR
+    else:
+        level = logging.CRITICAL
+elif config["DEBUG"]:
+    level = logging.DEBUG
+else:
+    level = logging.INFO
+
 log = logging.getLogger("smtp2mqtt")
 log.setLevel(level)
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -261,7 +294,7 @@ if log_dir:
     try:
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, "smtp2mqtt.log")
-        log.info(f"Setting up file logger at {log_file}")
+        log.info(f"Setting up file logger at {log_file} (loglevel: {logging.getLevelName(level)})")
         fh = logging.FileHandler(log_file)
         fh.setFormatter(formatter)
         log.addHandler(fh)
@@ -269,7 +302,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.20"
+VERSION = "1.8.21"
 
 
 class smtp2mqttHandler:
