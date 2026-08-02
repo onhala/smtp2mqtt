@@ -191,20 +191,82 @@ if (isset($_GET['action'])) {
 
     if ($act === 'test_mqtt') {
         header('Content-Type: application/json; charset=utf-8');
-        $mqtt_target_host = $config['MQTT_HOST'] ?? 'localhost';
-        $mqtt_target_port = intval($config['MQTT_PORT'] ?? 1883);
+        $use_lb = ($config['USE_LOXBERRY_MQTT'] === "True" || $config['USE_LOXBERRY_MQTT'] === true);
+        if ($use_lb && !empty($detected_mqtt['MQTT_HOST'])) {
+            $mqtt_host = $detected_mqtt['MQTT_HOST'];
+            $mqtt_port = $detected_mqtt['MQTT_PORT'];
+            $mqtt_user = $detected_mqtt['MQTT_USERNAME'];
+            $mqtt_pass = $detected_mqtt['MQTT_PASSWORD'];
+        } else {
+            $mqtt_host = $config['MQTT_HOST'] ?? 'localhost';
+            $mqtt_port = intval($config['MQTT_PORT'] ?? 1883);
+            $mqtt_user = $config['MQTT_USERNAME'] ?? '';
+            $mqtt_pass = $config['MQTT_PASSWORD'] ?? '';
+        }
 
-        $fp = @fsockopen($mqtt_target_host, $mqtt_target_port, $errno, $errstr, 3);
+        $fp = @fsockopen($mqtt_host, $mqtt_port, $errno, $errstr, 3);
         if (!$fp) {
             echo json_encode([
                 'success' => false,
-                'message' => "Chyba spojení: MQTT broker na {$mqtt_target_host}:{$mqtt_target_port} neodpovídá ($errstr)"
+                'message' => "Chyba TCP spojení: MQTT broker na {$mqtt_host}:{$mqtt_port} neodpovídá ($errstr)"
             ]);
-        } else {
-            fclose($fp);
+            exit;
+        }
+        stream_set_timeout($fp, 3);
+
+        $client_id = "smtp2mqtt_test_" . rand(1000, 9999);
+        $flags = 0x02; // Clean session
+        if (!empty($mqtt_user)) $flags |= 0x80;
+        if (!empty($mqtt_pass)) $flags |= 0x40;
+
+        $payload = pack('n', strlen($client_id)) . $client_id;
+        if (!empty($mqtt_user)) {
+            $payload .= pack('n', strlen($mqtt_user)) . $mqtt_user;
+        }
+        if (!empty($mqtt_pass)) {
+            $payload .= pack('n', strlen($mqtt_pass)) . $mqtt_pass;
+        }
+
+        $variable_header = pack('n', 4) . "MQTT" . pack('C', 4) . pack('C', $flags) . pack('n', 60);
+        $connect_data = $variable_header . $payload;
+        
+        $rem_len = strlen($connect_data);
+        $header = pack('C', 0x10);
+        do {
+            $digit = $rem_len % 128;
+            $rem_len = (int)($rem_len / 128);
+            if ($rem_len > 0) $digit |= 0x80;
+            $header .= pack('C', $digit);
+        } while ($rem_len > 0);
+
+        fwrite($fp, $header . $connect_data);
+        $response = fread($fp, 4);
+        fclose($fp);
+
+        if (strlen($response) < 4 || ord($response[0]) !== 0x20) {
+            echo json_encode([
+                'success' => false,
+                'message' => "⚠️ MQTT Broker na {$mqtt_host}:{$mqtt_port} neodpověděl platným CONNACK paketem."
+            ]);
+            exit;
+        }
+
+        $rc = ord($response[3]);
+        if ($rc === 0) {
+            $user_info = !empty($mqtt_user) ? " s uživatelem '{$mqtt_user}'" : " (bez autentizace)";
             echo json_encode([
                 'success' => true,
-                'message' => "✅ TCP Spojení s MQTT brokerem na {$mqtt_target_host}:{$mqtt_target_port} je plně funkční!"
+                'message' => "✅ Spojení s MQTT brokerem na {$mqtt_host}:{$mqtt_port}{$user_info} je plně funkční! Autentizace byla přijata."
+            ]);
+        } elseif ($rc === 4 || $rc === 5) {
+            echo json_encode([
+                'success' => false,
+                'message' => "❌ MQTT Broker na {$mqtt_host}:{$mqtt_port} odmítl přihlašovací údaje (Kód {$rc}: Not Authorized). Zkontrolujte jméno a heslo v nastavení."
+            ]);
+        } else {
+            echo json_encode([
+                'success' => false,
+                'message' => "❌ MQTT Broker na {$mqtt_host}:{$mqtt_port} odmítl spojení (Kód odmítnutí: {$rc})."
             ]);
         }
         exit;
