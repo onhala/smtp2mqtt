@@ -371,6 +371,12 @@ If this plugin or container saved you time or made your smart home setup easier,
 
 ---
 
+## 🙏 Acknowledgements & Attribution
+
+Special thanks to [wicol/emqtt](https://github.com/wicol/emqtt) for the original project and inspiration for an asynchronous SMTP-to-MQTT bridge. While `smtp2mqtt` has since been entirely re-engineered into an independent, multi-platform ecosystem with native LoxBerry integration, a real-time web dashboard, attachment extraction engines, and automated Docker CI, we gratefully acknowledge `wicol/emqtt` for the initial foundation.
+
+---
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
