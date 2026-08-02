@@ -38,7 +38,12 @@ echo "<INFO> Setting executable permissions..."
 chmod +x "$LBPBIN_DIR/smtp2mqtt.py" 2>/dev/null || true
 chmod +x "$LBPBIN_DIR/bin/smtp2mqtt.py" 2>/dev/null || true
 
+echo "<INFO> Registering plugin logfile in LoxBerry Log Database..."
+touch "$LBPLOG_DIR/smtp2mqtt.log"
+perl -MLoxBerry::Log -e '$log = LoxBerry::Log->new(name => "daemon", package => "smtp2mqtt", filename => "'"$LBPLOG_DIR/smtp2mqtt.log"'", append => 1, addtime => 1); $log->LOGSTART("smtp2mqtt session");' 2>/dev/null || true
+
 echo "<INFO> Starting smtp2mqtt daemon process..."
+
 DAEMON="$LBPBIN_DIR/smtp2mqtt.py"
 if [ ! -f "$DAEMON" ]; then
     DAEMON="$LBPBIN_DIR/bin/smtp2mqtt.py"

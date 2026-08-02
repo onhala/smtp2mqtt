@@ -106,12 +106,22 @@ def get_loxberry_paths() -> Dict[str, str]:
     if lb_home and os.path.exists(lb_home):
         paths["LBHOME"] = lb_home
         paths["LBHOMEDIR"] = lb_home
-        paths["LBPDATA"] = os.environ.get("LBPDATA", os.path.join(lb_home, "data", "plugins", "smtp2mqtt"))
-        paths["LBPLOG"] = os.environ.get("LBPLOG", os.path.join(lb_home, "log", "plugins", "smtp2mqtt"))
-        paths["LBPCONFIG"] = os.environ.get("LBPCONFIG", os.path.join(lb_home, "config", "plugins", "smtp2mqtt"))
+
+        def _ensure_plugin_dir(val: Optional[str], default_path: str) -> str:
+            if not val:
+                return default_path
+            val = val.rstrip("/\\")
+            if not val.endswith("smtp2mqtt"):
+                return os.path.join(val, "smtp2mqtt")
+            return val
+
+        paths["LBPDATA"] = _ensure_plugin_dir(os.environ.get("LBPDATA"), os.path.join(lb_home, "data", "plugins", "smtp2mqtt"))
+        paths["LBPLOG"] = _ensure_plugin_dir(os.environ.get("LBPLOG"), os.path.join(lb_home, "log", "plugins", "smtp2mqtt"))
+        paths["LBPCONFIG"] = _ensure_plugin_dir(os.environ.get("LBPCONFIG"), os.path.join(lb_home, "config", "plugins", "smtp2mqtt"))
         paths["LBPMQTT_JSON"] = os.path.join(lb_home, "config", "system", "mqttgateway.json")
         paths["LBPMQTT_INI"] = os.path.join(lb_home, "config", "system", "mqttgateway.ini")
     return paths
+
 
 
 def load_loxberry_mqtt_config(paths: Dict[str, str]) -> Dict[str, Any]:
@@ -201,8 +211,12 @@ def load_file_config(paths: Dict[str, str]) -> Dict[str, Any]:
 
 
 loxberry_paths = get_loxberry_paths()
+if "LBHOME" in loxberry_paths:
+    defaults["ENABLE_WEB"] = "False"
+
 lb_mqtt_defaults = load_loxberry_mqtt_config(loxberry_paths)
 file_defaults = load_file_config(loxberry_paths)
+
 
 
 def get_data_dir() -> str:
@@ -1766,8 +1780,35 @@ class smtp2mqttHandler:
             return f.read()
 
 
+def register_loxberry_log(loxberry_paths: Dict[str, str]) -> None:
+    """Registers the daemon logfile in LoxBerry's SQLite Log Database so logmanager.cgi displays it."""
+    log_dir = loxberry_paths.get("LBPLOG", "")
+    if not log_dir:
+        return
+    log_file = os.path.join(log_dir, "smtp2mqtt.log")
+    perl_cmd = f"""
+use LoxBerry::Log;
+my $log = LoxBerry::Log->new(
+    name => 'daemon',
+    package => 'smtp2mqtt',
+    filename => '{log_file}',
+    append => 1,
+    addtime => 1
+);
+$log->LOGSTART('smtp2mqtt gateway session');
+"""
+    try:
+        subprocess.run(["perl", "-e", perl_cmd], capture_output=True, timeout=5)
+    except Exception as e:
+        sys.stderr.write(f"Warning: Failed to register log in LoxBerry LogDB: {e}\n")
+
+
 def main():
+    if "LBHOME" in loxberry_paths:
+        register_loxberry_log(loxberry_paths)
+
     log.info("Starting smtp2mqtt gateway...")
+
     log.debug("Configuration: %s", ", ".join([f"{k}={v}" for k, v in config.items()]))
 
     loop = asyncio.new_event_loop()

@@ -114,6 +114,21 @@ if ((empty($detected_mqtt['MQTT_USERNAME']) || empty($detected_mqtt['MQTT_PASSWO
     }
 }
 
+// Fallback to official LoxBerry IO SDK function if available
+if (!function_exists('mqtt_connectiondetails')) {
+    @include_once "loxberry_io.php";
+}
+if (function_exists('mqtt_connectiondetails')) {
+    $mcreds = mqtt_connectiondetails();
+    if (is_array($mcreds)) {
+        if (!empty($mcreds['brokerhost'])) $detected_mqtt['MQTT_HOST'] = $mcreds['brokerhost'];
+        if (!empty($mcreds['brokerport'])) $detected_mqtt['MQTT_PORT'] = intval($mcreds['brokerport']);
+        if (!empty($mcreds['brokeruser'])) $detected_mqtt['MQTT_USERNAME'] = $mcreds['brokeruser'];
+        if (!empty($mcreds['brokerpass'])) $detected_mqtt['MQTT_PASSWORD'] = $mcreds['brokerpass'];
+    }
+}
+
+
 $defaults['MQTT_HOST'] = $detected_mqtt['MQTT_HOST'];
 $defaults['MQTT_PORT'] = $detected_mqtt['MQTT_PORT'];
 $defaults['MQTT_USERNAME'] = $detected_mqtt['MQTT_USERNAME'];
@@ -204,18 +219,33 @@ if (isset($_GET['action'])) {
 
     if ($act === 'test_mqtt') {
         header('Content-Type: application/json; charset=utf-8');
-        $use_lb = ($config['USE_LOXBERRY_MQTT'] === "True" || $config['USE_LOXBERRY_MQTT'] === true);
+        
+        $has_req = isset($_REQUEST['use_loxberry_mqtt']) || isset($_REQUEST['mqtt_host']);
+        if ($has_req) {
+            $use_lb = (($_REQUEST['use_loxberry_mqtt'] ?? '') === 'true' || ($_REQUEST['use_loxberry_mqtt'] ?? '') === '1' || ($_REQUEST['use_loxberry_mqtt'] ?? '') === 'on');
+        } else {
+            $use_lb = ($config['USE_LOXBERRY_MQTT'] === "True" || $config['USE_LOXBERRY_MQTT'] === true);
+        }
+
         if ($use_lb && !empty($detected_mqtt['MQTT_HOST']) && !empty($detected_mqtt['MQTT_USERNAME'])) {
             $mqtt_host = $detected_mqtt['MQTT_HOST'];
             $mqtt_port = $detected_mqtt['MQTT_PORT'];
             $mqtt_user = $detected_mqtt['MQTT_USERNAME'];
             $mqtt_pass = $detected_mqtt['MQTT_PASSWORD'];
         } else {
-            $mqtt_host = !empty($config['MQTT_HOST']) ? $config['MQTT_HOST'] : ($detected_mqtt['MQTT_HOST'] ?? 'localhost');
-            $mqtt_port = intval(!empty($config['MQTT_PORT']) ? $config['MQTT_PORT'] : ($detected_mqtt['MQTT_PORT'] ?? 1883));
-            $mqtt_user = $config['MQTT_USERNAME'] ?? '';
-            $mqtt_pass = $config['MQTT_PASSWORD'] ?? '';
+            if ($has_req) {
+                $mqtt_host = !empty($_REQUEST['mqtt_host']) ? trim($_REQUEST['mqtt_host']) : 'localhost';
+                $mqtt_port = !empty($_REQUEST['mqtt_port']) ? intval($_REQUEST['mqtt_port']) : 1883;
+                $mqtt_user = isset($_REQUEST['mqtt_username']) ? trim($_REQUEST['mqtt_username']) : '';
+                $mqtt_pass = $_REQUEST['mqtt_password'] ?? '';
+            } else {
+                $mqtt_host = !empty($config['MQTT_HOST']) ? $config['MQTT_HOST'] : ($detected_mqtt['MQTT_HOST'] ?? 'localhost');
+                $mqtt_port = intval(!empty($config['MQTT_PORT']) ? $config['MQTT_PORT'] : ($detected_mqtt['MQTT_PORT'] ?? 1883));
+                $mqtt_user = $config['MQTT_USERNAME'] ?? '';
+                $mqtt_pass = $config['MQTT_PASSWORD'] ?? '';
+            }
         }
+
 
         $fp = @fsockopen($mqtt_host, $mqtt_port, $errno, $errstr, 3);
         if (!$fp) {
@@ -347,7 +377,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         $config['SAVE_ATTACHMENTS'] = isset($_POST['save_attachments']) ? "True" : "False";
         $config['CLEANUP_ATTACHMENTS_DAYS'] = intval($_POST['cleanup_attachments_days'] ?? 30);
         $config['CLEANUP_LOGS_DAYS'] = intval($_POST['cleanup_logs_days'] ?? 30);
-        $config['DEBUG'] = isset($_POST['debug']) ? "True" : "False";
+
+        $new_loglevel = intval($_POST['plugin_loglevel'] ?? 4);
+        $config['DEBUG'] = ($new_loglevel >= 7 || isset($_POST['debug'])) ? "True" : "False";
+
+        // Update LOGLEVEL in LoxBerry plugin.cfg
+        $pcfg_file = $config_dir . "/plugin.cfg";
+        if (file_exists($pcfg_file)) {
+            $pcfg_content = file_get_contents($pcfg_file);
+            if (preg_match('/LOGLEVEL\s*=\s*\d+/', $pcfg_content)) {
+                $pcfg_content = preg_replace('/LOGLEVEL\s*=\s*\d+/', "LOGLEVEL={$new_loglevel}", $pcfg_content);
+            } else if (preg_match('/\[PLUGIN\]/i', $pcfg_content)) {
+                $pcfg_content = preg_replace('/\[PLUGIN\]/i', "[PLUGIN]\nLOGLEVEL={$new_loglevel}", $pcfg_content);
+            }
+            file_put_contents($pcfg_file, $pcfg_content);
+        }
+
 
         if (!file_exists($config_dir)) {
             mkdir($config_dir, 0755, true);
@@ -379,7 +424,8 @@ if (!empty($pgrep_out)) {
 }
 
 // Output LoxBerry Header
-LBWeb::lbheader("smtp2mqtt Bridge", "http://" . $_SERVER['HTTP_HOST'] . "/admin/plugins/smtp2mqtt/?tab=help", "smtp2mqtt");
+LBWeb::lbheader("smtp2mqtt Bridge", "index.php?tab=help", "smtp2mqtt");
+
 
 $active_tab = $_GET['tab'] ?? 'settings';
 ?>
@@ -703,8 +749,19 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     </div>
 
                     <!-- Maintenance & Retention -->
-                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🖼️ Přílohy & Údržba</h4>
+                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🖼️ Úroveň Logování & Údržba</h4>
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                        <div>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Úroveň Logování (LoxBerry System LogLevel):</label>
+                            <?php $current_loglevel = intval($lbpconfig['PLUGIN']['LOGLEVEL'] ?? $lbpconfig['SYSTEM']['LOGLEVEL'] ?? 4); ?>
+                            <select name="plugin_loglevel" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                                <option value="7" <?php echo ($current_loglevel >= 7) ? 'selected' : ''; ?>>7 - DEBUG (Detailní ladicí výpisy)</option>
+                                <option value="4" <?php echo ($current_loglevel == 4) ? 'selected' : ''; ?>>4 - INFO (Běžný provoz - výchozí)</option>
+                                <option value="1" <?php echo ($current_loglevel == 1) ? 'selected' : ''; ?>>1 - ERROR (Pouze chyby)</option>
+                                <option value="0" <?php echo ($current_loglevel == 0) ? 'selected' : ''; ?>>0 - OFF (Vypnuto)</option>
+                            </select>
+                        </div>
+
                         <div>
                             <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Retence Příloh (Dní):</label>
                             <input type="number" name="cleanup_attachments_days" value="<?php echo htmlspecialchars($config['CLEANUP_ATTACHMENTS_DAYS']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
@@ -715,6 +772,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                             <input type="number" name="cleanup_logs_days" value="<?php echo htmlspecialchars($config['CLEANUP_LOGS_DAYS']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
                     </div>
+
 
                     <div style="display: flex; gap: 25px; margin-top: 15px; align-items: center;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
@@ -794,7 +852,9 @@ $active_tab = $_GET['tab'] ?? 'settings';
         <div class="lox-card">
             <div class="lox-card-header">
                 <h3 class="lox-card-title">📋 Prohlížeč Logů</h3>
-                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <a href="/admin/system/logmanager.cgi?package=smtp2mqtt" target="_blank" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; background: #0284c7; color: #ffffff; text-decoration: none;">📋 LoxBerry Log Manager</a>
+                    <a href="/admin/system/tools/logfile.cgi?logfile=plugins/smtp2mqtt/smtp2mqtt.log&header=html&format=template" target="_blank" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; background: #0d9488; color: #ffffff; text-decoration: none;">🔍 LoxBerry Log Viewer</a>
                     <input type="text" id="log-search" oninput="filterLogLines()" placeholder="🔍 Hledat v logu..." style="padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem;">
                     <button onclick="setLogLevelFilter('ALL')" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">Vše</button>
                     <button onclick="setLogLevelFilter('ERROR')" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #dc2626;">🔴 Chyby</button>
@@ -803,6 +863,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <a href="?action=download_log" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">📥 Stáhnout</a>
                     <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #dc2626;">🧹 Vyčistit</a>
                 </div>
+
             </div>
             <div class="lox-card-body">
                 <?php
@@ -951,7 +1012,16 @@ $active_tab = $_GET['tab'] ?? 'settings';
 
     function runDiagnosticTest(type) {
         showToast('⏳ Spouštím diagnostický test...', true);
-        fetch('?action=test_' + type)
+        let url = '?action=test_' + type;
+        if (type === 'mqtt') {
+            const useLb = document.getElementById('use_loxberry_mqtt')?.checked ? 'true' : 'false';
+            const host = encodeURIComponent(document.getElementById('mqtt_host')?.value || '');
+            const port = encodeURIComponent(document.getElementById('mqtt_port')?.value || '');
+            const user = encodeURIComponent(document.getElementById('mqtt_username')?.value || '');
+            const pass = encodeURIComponent(document.getElementById('mqtt_password')?.value || '');
+            url += `&use_loxberry_mqtt=${useLb}&mqtt_host=${host}&mqtt_port=${port}&mqtt_username=${user}&mqtt_password=${pass}`;
+        }
+        fetch(url)
             .then(r => r.json())
             .then(data => {
                 showToast(data.message, data.success);
@@ -961,6 +1031,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
             })
             .catch(() => { showToast('Chyba při komunikaci se serverem', false); });
     }
+
 
     function validateConfigForm() {
         const smtpPort = parseInt(document.getElementById('smtp_port')?.value);
@@ -1067,11 +1138,16 @@ $active_tab = $_GET['tab'] ?? 'settings';
 
     document.addEventListener('DOMContentLoaded', () => {
         toggleMqttFields();
+        const logBox = document.getElementById('log-box');
+        if (logBox) {
+            logBox.scrollTop = logBox.scrollHeight;
+        }
         if (window.location.search.includes('tab=dashboard')) {
             refreshDashboardJSON();
             setInterval(refreshDashboardJSON, 5000);
         }
     });
+
 </script>
 
 <?php
