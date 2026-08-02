@@ -1,28 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
-  <!-- Pure transparent background with flat vector white envelope and Loxone Green WiFi waves -->
-  <!-- Designed specifically for extreme high-contrast legibility as a browser tab favicon -->
   <defs>
-    <!-- Dark drop-shadow to guarantee high contrast on both light and dark browser tabs -->
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.8" />
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="50%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#22c55e" />
+    </linearGradient>
+    <linearGradient id="flapGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc" />
+      <stop offset="100%" stop-color="#e2e8f0" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
     </filter>
   </defs>
 
-  <g filter="url(#shadow)">
-    <!-- Envelope (representing SMTP) -->
-    <rect x="112" y="320" width="288" height="162" rx="20" fill="none" stroke="#ffffff" stroke-width="28" stroke-linejoin="round" />
-    <path d="M 112 320 L 256 410 L 400 320" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" />
+  <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#bgGrad)" filter="url(#shadow)" />
+  <rect x="32" y="32" width="448" height="448" rx="100" fill="none" stroke="url(#accentGrad)" stroke-width="6" stroke-opacity="0.6" />
 
-    <!-- Bold Green Transmission Arrow pointing UP (representing gateway/forwarding) -->
-    <path d="M 256 440 L 256 230" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
-    <path d="M 216 270 L 256 230 L 296 270" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" />
+  <g transform="translate(0, 8)" filter="url(#shadow)">
+    <rect x="112" y="160" width="288" height="200" rx="24" fill="#1e293b" stroke="#e2e8f0" stroke-width="12" />
+    <path d="M 124 172 L 256 276 L 388 172" fill="none" stroke="url(#flapGrad)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 124 348 L 210 260" fill="none" stroke="#94a3b8" stroke-width="10" stroke-linecap="round" />
+    <path d="M 388 348 L 302 260" fill="none" stroke="#94a3b8" stroke-width="10" stroke-linecap="round" />
+  </g>
 
-    <!-- Concentric WiFi waves (representing MQTT wireless/mesh/network broadcast) -->
-    <!-- First wave arc (radius 100) -->
-    <path d="M 185 209 A 100 100 0 0 1 327 209" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
-    <!-- Second wave arc (radius 180) -->
-    <path d="M 129 153 A 180 180 0 0 1 383 153" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
-    <!-- Third wave arc (radius 260) -->
-    <path d="M 72 96 A 260 260 0 0 1 440 96" fill="none" stroke="#7ec127" stroke-width="32" stroke-linecap="round" />
+  <g filter="url(#glow)">
+    <path d="M 256 128 A 120 120 0 0 1 366 190" fill="none" stroke="url(#accentGrad)" stroke-width="14" stroke-linecap="round" />
+    <path d="M 256 96 A 156 156 0 0 1 400 176" fill="none" stroke="#38bdf8" stroke-width="10" stroke-linecap="round" stroke-dasharray="2 12" />
+    <circle cx="256" cy="128" r="16" fill="#22c55e" stroke="#ffffff" stroke-width="4" />
+    <circle cx="366" cy="190" r="12" fill="#38bdf8" stroke="#ffffff" stroke-width="3" />
   </g>
 </svg>

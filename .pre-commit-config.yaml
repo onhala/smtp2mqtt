@@ -1,0 +1,19 @@
+# Pre-commit configuration for smtp2mqtt
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: pytest-check
+        name: Pytest Test Suite
+        entry: ./.venv/bin/pytest
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -1,9 +1,10 @@
 {
-  "status": "online",
+  "is_running": false,
   "mqtt_host": "localhost",
   "mqtt_port": 1883,
   "mqtt_connected": false,
   "mqtt_status_text": "Disconnected",
+  "smtp_host": "0.0.0.0",
   "smtp_port": 1025,
   "smtp_connected": false,
   "smtp_status_text": "Inactive",
@@ -13,7 +14,7 @@
   "uptime_seconds": 0,
   "uptime_formatted": "0s",
   "recent_actions": [],
-  "version": "1.8.17",
+  "version": "1.8.18",
   "latest_version": null,
   "update_available": false,
   "version_check_status": "pending"

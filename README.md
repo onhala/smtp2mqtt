@@ -10,6 +10,7 @@
 [![License](https://img.shields.io/github/license/onhala/smtp2mqtt?color=green)](LICENSE)
 [![Docker Build](https://img.shields.io/badge/docker-multi--arch-blue.svg?logo=docker)](Dockerfile)
 [![Loxone / Loxberry](https://img.shields.io/badge/integration-Loxone%20%2F%20Loxberry-orange.svg)](https://www.loxone.com)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-orange.svg?logo=buy-me-a-coffee)](https://buymeacoffee.com/ondrejhala8)
 
 A lightweight, high-performance, and fully asynchronous SMTP-to-MQTT bridge. It runs an unthreaded SMTP gateway, receives emails (e.g., motion detection trigger emails from Hikvision cameras), and publishes trigger payloads directly to an MQTT broker.
 
@@ -357,6 +358,16 @@ volumes:
   smtp2mqtt_log:
   smtp2mqtt_attachments:
 ```
+
+---
+
+## ☕ Support & Community
+
+`smtp2mqtt` is a free and open-source personal project created and maintained by **Ondřej Hála** ([ondrejhala@gmail.com](mailto:ondrejhala@gmail.com)).
+
+If this plugin or container saved you time or made your smart home setup easier, contributions, feedback, and feature suggestions are always welcome!
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Donate-orange.svg?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/ondrejhala8)
 
 ---
 

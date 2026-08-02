@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Standalone Git Pre-commit Hook for smtp2mqtt
+set -e
+
+echo "🔍 Spouštím před-commitové kontroly..."
+
+# Check virtualenv
+if [ -f "./.venv/bin/pytest" ]; then
+    PYTEST_BIN="./.venv/bin/pytest"
+else
+    PYTEST_BIN="pytest"
+fi
+
+echo "🧪 Běží testovací suita pytest..."
+$PYTEST_BIN -v --tb=short
+
+echo "✅ Všechny testy prošly! Commit pokračuje."
