@@ -6,7 +6,7 @@ if [ -f /etc/environment ]; then
 fi
 
 LB_HOME="${LBHOMEDIR:-$HOME}"
-PDIR="${3:-smtp2mqtt}"
+PDIR="${2:-smtp2mqtt}"
 LBPBIN_DIR="${LBPBIN:-$LB_HOME/bin/plugins}/$PDIR"
 LBPCONFIG_DIR="${LBPCONFIG:-$LB_HOME/config/plugins}/$PDIR"
 LBPDATA_DIR="${LBPDATA:-$LB_HOME/data/plugins}/$PDIR"

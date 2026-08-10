@@ -356,7 +356,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.25"
+VERSION = "1.8.26"
 
 
 class smtp2mqttHandler:
