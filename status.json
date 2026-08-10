@@ -7,22 +7,23 @@
   "smtp_port": 1025,
   "smtp_connected": false,
   "smtp_status_text": "Inactive",
-  "last_publish_success": true,
-  "last_publish_time": "2026-08-02 15:27:51",
-  "processed_messages_count": 1,
+  "last_publish_success": false,
+  "last_publish_time": "2026-08-10 08:29:56",
+  "processed_messages_count": 0,
   "uptime_seconds": 0,
   "uptime_formatted": "0s",
   "recent_actions": [
     {
-      "timestamp": "2026-08-02 15:27:51",
-      "type": "trigger (extended)",
-      "sender": "camera1@home.com",
-      "topic": "smtp2mqtt/camera1-home.com",
-      "payload": "ON",
-      "status": "SUCCESS"
+      "timestamp": "2026-08-10 08:29:56",
+      "type": "system",
+      "sender": "system",
+      "topic": "MQTT Broker (localhost:1883)",
+      "payload": "Offline (Unreachable)",
+      "status": "FAILED"
     }
   ],
-  "version": "1.8.22",
+  "recent_blocked_attempts": [],
+  "version": "1.8.25",
   "latest_version": null,
   "update_available": false,
   "version_check_status": "pending"

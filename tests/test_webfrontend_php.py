@@ -8,6 +8,15 @@ import pytest
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MOCK_DIR = os.path.join(PROJECT_ROOT, "tests", "mock_loxberry")
 
+def _check_docker():
+    try:
+        res = subprocess.run(["docker", "info"], capture_output=True, timeout=2)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+pytestmark = pytest.mark.skipif(not _check_docker(), reason="Docker daemon is not running")
+
 
 def run_php_script_in_dir(tmp_dir, query_string="", post_data=None, env_vars=None):
     """Helper to run index.php in php:8.2-cli Docker container with mock LoxBerry SDK."""

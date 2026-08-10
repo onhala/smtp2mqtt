@@ -127,6 +127,33 @@ def get_loxberry_paths() -> Dict[str, str]:
 def load_loxberry_mqtt_config(paths: Dict[str, str]) -> Dict[str, Any]:
     """Auto-detect MQTT broker configuration from LoxBerry MQTT Gateway V2 / Mosquitto."""
     mqtt_cfg = {}
+
+    # 1. Try LoxBerry PHP SDK mqtt_connectiondetails() call first (100% reliable on LoxBerry)
+    if paths.get("LBHOME"):
+        try:
+            res = subprocess.run(
+                ["php", "-r", 'require_once "loxberry_io.php"; if (function_exists("mqtt_connectiondetails")) { echo json_encode(mqtt_connectiondetails()); }'],
+                capture_output=True,
+                text=True,
+                timeout=4
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout.strip())
+                if isinstance(data, dict):
+                    if data.get("brokerhost"):
+                        mqtt_cfg["MQTT_HOST"] = str(data["brokerhost"])
+                    if data.get("brokerport"):
+                        try:
+                            mqtt_cfg["MQTT_PORT"] = int(data["brokerport"])
+                        except ValueError:
+                            pass
+                    if data.get("brokeruser"):
+                        mqtt_cfg["MQTT_USERNAME"] = str(data["brokeruser"])
+                    if data.get("brokerpass"):
+                        mqtt_cfg["MQTT_PASSWORD"] = str(data["brokerpass"])
+        except Exception:
+            pass
+
     mqtt_json = paths.get("LBPMQTT_JSON")
     mqtt_ini = paths.get("LBPMQTT_INI")
 
@@ -329,7 +356,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.24"
+VERSION = "1.8.25"
 
 
 class smtp2mqttHandler:

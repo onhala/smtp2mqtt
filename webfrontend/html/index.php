@@ -23,10 +23,17 @@ $L_ini = LBSystem::readlanguage("language.ini");
 $L = array_merge(is_array($L_ini) ? $L_ini : [], $L_json);
 
 // Plugin version dynamically from LoxBerry config
-$plugin_version = $lbpconfig['PLUGIN']['VERSION'] ?? '1.8.24';
+$plugin_version = $lbpconfig['PLUGIN']['VERSION'] ?? '1.8.25';
 
-// Define paths
+// Define paths safely with fallbacks for LoxBerry environment
+$lbpconfigdir = !empty($lbpconfigdir) ? $lbpconfigdir : (defined('LBPCONFIGDIR') ? LBPCONFIGDIR : "/opt/loxberry/config/plugins/smtp2mqtt");
+$lbplogdir = !empty($lbplogdir) ? $lbplogdir : (defined('LBPLOGDIR') ? LBPLOGDIR : "/opt/loxberry/log/plugins/smtp2mqtt");
+$lbpbindir = !empty($lbpbindir) ? $lbpbindir : (defined('LBPBINDIR') ? LBPBINDIR : "/opt/loxberry/bin/plugins/smtp2mqtt");
+$lbpdatadir = !empty($lbpdatadir) ? $lbpdatadir : (defined('LBPDATADIR') ? LBPDATADIR : "/opt/loxberry/data/plugins/smtp2mqtt");
+$lbsysconfigdir = !empty($lbsysconfigdir) ? $lbsysconfigdir : (defined('LBSYSCONFIGDIR') ? LBSYSCONFIGDIR : "/opt/loxberry/config/system");
+
 $config_dir = $lbpconfigdir;
+$config_file = $config_dir . "/config.json";
 $log_candidates = [
     $lbplogdir . "/smtp2mqtt.log",
     "/opt/loxberry/log/plugins/smtp2mqtt/smtp2mqtt.log",
@@ -450,6 +457,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         }
 
         if (file_put_contents($config_file, json_encode($config, JSON_PRETTY_PRINT))) {
+            @chmod($config_file, 0666);
             $message = "Konfigurace uložena. Restartuji službu smtp2mqtt...";
             $daemon_runner = $lbpbindir . "/daemon/daemon";
             if (file_exists($daemon_runner)) {
