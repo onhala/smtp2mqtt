@@ -74,9 +74,9 @@ $defaults = [
     "MQTT_USERNAME" => "",
     "MQTT_PASSWORD" => "",
     "MQTT_TOPIC" => "smtp2mqtt",
-    "MQTT_PAYLOAD" => "ON",
-    "MQTT_RESET_TIME" => 200,
-    "MQTT_RESET_PAYLOAD" => "OFF",
+    "MQTT_PAYLOAD" => "1",
+    "MQTT_RESET_TIME" => 10,
+    "MQTT_RESET_PAYLOAD" => "0",
     "SAVE_ATTACHMENTS" => "True",
     "CLEANUP_ATTACHMENTS_DAYS" => 30,
     "CLEANUP_LOGS_DAYS" => 30,
@@ -429,9 +429,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         }
 
         $config['MQTT_TOPIC'] = trim($_POST['mqtt_topic'] ?? 'smtp2mqtt');
-        $config['MQTT_PAYLOAD'] = trim($_POST['mqtt_payload'] ?? 'ON');
+        $config['MQTT_PAYLOAD'] = trim($_POST['mqtt_payload'] ?? '1');
         $config['MQTT_RESET_TIME'] = intval($_POST['mqtt_reset_time'] ?? 10);
-        $config['MQTT_RESET_PAYLOAD'] = trim($_POST['mqtt_reset_payload'] ?? 'OFF');
+        $config['MQTT_RESET_PAYLOAD'] = trim($_POST['mqtt_reset_payload'] ?? '0');
         $config['SAVE_ATTACHMENTS'] = isset($_POST['save_attachments']) ? "True" : "False";
         $config['CLEANUP_ATTACHMENTS_DAYS'] = intval($_POST['cleanup_attachments_days'] ?? 30);
         $config['CLEANUP_LOGS_DAYS'] = intval($_POST['cleanup_logs_days'] ?? 30);

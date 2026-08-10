@@ -40,10 +40,10 @@
     "LABEL_MQTT_PASS": "MQTT Heslo",
     "LABEL_MQTT_TOPIC": "Základní MQTT Topic",
     "HELP_MQTT_TOPIC": "E-maily vytvoří pod-topicy, např. smtp2mqtt/kamera_zahrada.",
-    "LABEL_MQTT_PAYLOAD": "Payload spouštěče (ON)",
+    "LABEL_MQTT_PAYLOAD": "Payload spouštěče (1)",
     "LABEL_MQTT_RESET_TIME": "Čas automatického resetu (sekundy)",
     "HELP_MQTT_RESET_TIME": "Po kolika sekundách se stav resetuje zpět (0 = bez auto-resetu).",
-    "LABEL_MQTT_RESET_PAYLOAD": "Payload resetu (OFF)",
+    "LABEL_MQTT_RESET_PAYLOAD": "Payload resetu (0)",
 
     "SEC_ATTACHMENTS": "🖼️ Ukládání Příloh a Čištění",
     "LABEL_SAVE_ATTACHMENTS": "Ukládat obrázky a přílohy e-mailů",

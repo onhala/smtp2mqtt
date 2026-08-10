@@ -293,7 +293,7 @@ async def test_smtp2mqtt_handler_sanitizes_mqtt_topic():
         assert res == "250 Message accepted for delivery"
         # The '@' becomes '-', '+' and '#' and '/' should become '_'
         expected_topic = "smtp2mqtt/attacker_test___bypass-domain.com"
-        mock_pub.assert_called_once_with(expected_topic, "ON", "trigger", "attacker+test/#/bypass@domain.com")
+        mock_pub.assert_called_once_with(expected_topic, "1", "trigger", "attacker+test/#/bypass@domain.com")
         assert expected_topic in handler.handles
         
         handler.cancel_all_resets()
@@ -315,7 +315,7 @@ async def test_smtp2mqtt_handler_handle_data_basic():
         res = await handler.handle_DATA(None, None, envelope)
         
         assert res == "250 Message accepted for delivery"
-        mock_pub.assert_called_once_with("smtp2mqtt/sender-domain.com", "ON", "trigger", "sender@domain.com")
+        mock_pub.assert_called_once_with("smtp2mqtt/sender-domain.com", "1", "trigger", "sender@domain.com")
         assert "smtp2mqtt/sender-domain.com" in handler.handles
         
         handler.cancel_all_resets()
@@ -555,7 +555,7 @@ def test_integration_flow():
         
         assert f"SMTP server is listening on 0.0.0.0:{test_port}" in stdout
         assert ("Received SMTP MAIL FROM from camera@house.com" in stdout or "Received SMTP message from camera@house.com" in stdout)
-        assert "Publishing payload 'ON' to topic 'smtp2mqtt/camera-house.com'" in stdout
+        assert "Publishing payload '1' to topic 'smtp2mqtt/camera-house.com'" in stdout
         assert "Received termination signal" in stdout
         assert "smtp2mqtt gateway stopped successfully." in stdout
         
@@ -1334,7 +1334,7 @@ async def test_handle_data_associates_attachments_to_recent_actions(monkeypatch)
             "sender": "sender@domain.com",
             "topic": "smtp2mqtt/sender-domain.com",
             "time": "12:00",
-            "payload": "ON"
+            "payload": "1"
         }
     ]
     
@@ -1999,7 +1999,7 @@ async def test_variant_b_sliding_window_reset_and_ms_scaling():
         res1 = await handler.handle_MAIL(None, None, envelope, "camera1@home.com", [])
         assert res1 == "250 OK"
         assert mock_pub.call_count == 1
-        mock_pub.assert_called_with("smtp2mqtt/camera1-home.com", "ON", "trigger", "camera1@home.com")
+        mock_pub.assert_called_with("smtp2mqtt/camera1-home.com", "1", "trigger", "camera1@home.com")
 
         # Verify call_later argument is 0.2 seconds
         assert loop.call_later.call_count == 1
