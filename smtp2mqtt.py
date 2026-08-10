@@ -78,7 +78,7 @@ defaults: Dict[str, Union[str, int]] = {
     "MQTT_PASSWORD": "",
     "MQTT_TOPIC": "smtp2mqtt",
     "MQTT_PAYLOAD": "ON",
-    "MQTT_RESET_TIME": "200",
+    "MQTT_RESET_TIME": "10",
     "MQTT_RESET_PAYLOAD": "OFF",
     "SAVE_ATTACHMENTS": "False",
     "SAVE_ATTACHMENTS_DURING_RESET_TIME": "False",
@@ -302,27 +302,40 @@ ch = logging.StreamHandler(sys.stdout)
 ch.setFormatter(formatter)
 log.addHandler(ch)
 
+class FlushingFileHandler(logging.FileHandler):
+    """Custom FileHandler that flushes log records to disk immediately."""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 # File logging path resolution (LoxBerry log dir prioritized if available)
 log_dir = loxberry_paths.get("LBPLOG") if "LBPLOG" in loxberry_paths else ("log" if os.path.exists("log") else None)
+if not log_dir and loxberry_paths.get("LBHOME"):
+    log_dir = os.path.join(loxberry_paths["LBHOME"], "log", "plugins", "smtp2mqtt")
+
 if log_dir:
     try:
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, "smtp2mqtt.log")
-        log.info(f"Setting up file logger at {log_file} (loglevel: {logging.getLevelName(level)})")
-        fh = logging.FileHandler(log_file)
+        fh = FlushingFileHandler(log_file, encoding="utf-8")
         fh.setFormatter(formatter)
         log.addHandler(fh)
+        try:
+            os.chmod(log_file, 0o666)
+        except Exception:
+            pass
+        log.info(f"Setting up file logger at {log_file} (loglevel: {logging.getLevelName(level)})")
     except Exception as e:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.22"
+VERSION = "1.8.24"
 
 
 class smtp2mqttHandler:
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
-        self.reset_time: int = config["MQTT_RESET_TIME"]
+        self.reset_time: float = float(config["MQTT_RESET_TIME"])
         self.handles: Dict[str, asyncio.TimerHandle] = {}
         self.background_tasks = set()
         
@@ -332,6 +345,7 @@ class smtp2mqttHandler:
         self.last_publish_success: Optional[bool] = None
         self.last_publish_time: Optional[str] = None
         self.recent_actions: List[Dict[str, Any]] = []  # List of dicts
+        self.recent_blocked_attempts: List[Dict[str, Any]] = []  # Track blocked IPs
         self.latest_version: Optional[str] = None
         self.update_available: bool = False
         self.version_check_status: str = "pending"
@@ -421,7 +435,13 @@ class smtp2mqttHandler:
         self.save_status_file()
 
     def save_status_file(self) -> None:
-        """Saves current status JSON to status.json on disk for PHP WebAdmin."""
+        """Saves current status JSON to status.json on disk for PHP WebAdmin (non-blocking)."""
+        if hasattr(self, "loop") and self.loop and self.loop.is_running():
+            self.loop.create_task(asyncio.to_thread(self._write_status_file_sync))
+        else:
+            self._write_status_file_sync()
+
+    def _write_status_file_sync(self) -> None:
         data_dir = get_data_dir()
         try:
             os.makedirs(data_dir, exist_ok=True)
@@ -485,15 +505,77 @@ class smtp2mqttHandler:
         peer_ip = session.peer[0] if session and hasattr(session, "peer") and session.peer else None
         if not self.is_ip_allowed(peer_ip):
             log.warning("Rejected SMTP connection from unauthorized IP: %s", peer_ip)
+            if peer_ip:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if not hasattr(self, "recent_blocked_attempts"):
+                    self.recent_blocked_attempts = []
+                found = False
+                for attempt in self.recent_blocked_attempts:
+                    if attempt.get("ip") == peer_ip:
+                        attempt["count"] = attempt.get("count", 1) + 1
+                        attempt["timestamp"] = timestamp
+                        found = True
+                        break
+                if not found:
+                    self.recent_blocked_attempts.insert(0, {
+                        "ip": peer_ip,
+                        "timestamp": timestamp,
+                        "count": 1
+                    })
+                    if len(self.recent_blocked_attempts) > 10:
+                        self.recent_blocked_attempts.pop()
+                self.log_action("security", peer_ip, "smtp/connect", "554 IP Blocked", False)
             return f"554 5.7.1 Access denied: IP address {peer_ip} not allowed"
         return "220 Welcome to smtp2mqtt"
+
+    async def handle_MAIL(self, server: Any, session: Any, envelope: Any, address: str, mail_options: List[str]) -> str:
+        """Processes MAIL FROM command with instant Early-Trigger (< 10 ms latency)."""
+        envelope.mail_from = address
+        if hasattr(envelope, "mail_options") and isinstance(envelope.mail_options, list):
+            envelope.mail_options.extend(mail_options)
+
+        log.info("Received SMTP MAIL FROM from %s", address)
+
+        # Construct topic based on sender, sanitizing dangerous MQTT wildcard characters
+        sanitized_sender = (
+            address.replace("@", "-")
+            .replace("/", "_")
+            .replace("+", "_")
+            .replace("#", "_")
+        )
+        topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
+        setattr(envelope, "_early_triggered_topic", topic)
+
+        # Check if topic is currently triggered (in reset time window)
+        is_triggered = topic in self.handles
+
+        if not is_triggered:
+            log.debug("Early-dispatching MQTT publish for trigger payload on MAIL FROM...")
+            await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", address)
+        else:
+            log.info("Topic %s is already in triggered state. Extending reset timer (Variant B) without duplicate ON publish.", topic)
+            self.log_action("trigger (extended)", address, topic, config["MQTT_PAYLOAD"], True)
+
+        # Cancel existing reset timer if active and reschedule for new window (sliding window)
+        if topic in self.handles:
+            log.debug("Cancelling existing reset timer for topic: %s", topic)
+            self.handles.pop(topic).cancel()
+
+        # Schedule a new reset timer in seconds
+        if self.reset_time > 0:
+            reset_time_seconds = float(self.reset_time)
+            log.debug("Scheduling topic reset in %.3f seconds: %s", reset_time_seconds, topic)
+            self.handles[topic] = self.loop.call_later(
+                reset_time_seconds, self._trigger_reset, topic
+            )
+
+        return "250 OK"
 
     async def handle_DATA(self, server: Any, session: Any, envelope: Any) -> str:
         """Processes incoming SMTP email messages."""
         mail_from = envelope.mail_from
-        log.info("Received SMTP message from %s", mail_from)
+        log.info("Received SMTP DATA payload from %s", mail_from)
 
-        # Construct topic based on sender, sanitizing dangerous MQTT wildcard characters
         sanitized_sender = (
             mail_from.replace("@", "-")
             .replace("/", "_")
@@ -502,41 +584,37 @@ class smtp2mqttHandler:
         )
         topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
 
-        # Check if topic is currently triggered (in reset time window)
-        is_triggered = topic in self.handles
+        # Fallback check: if handle_MAIL was not called or didn't trigger
+        early_triggered_topic = getattr(envelope, "_early_triggered_topic", None)
+        if early_triggered_topic != topic:
+            is_triggered = topic in self.handles
+            if not is_triggered:
+                log.debug("Fallback dispatching MQTT publish for trigger payload in handle_DATA...")
+                await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
+            else:
+                log.info("Topic %s is already in triggered state in handle_DATA. Extending reset timer.", topic)
+                self.log_action("trigger (extended)", mail_from, topic, config["MQTT_PAYLOAD"], True)
 
-        if not is_triggered:
-            # Publish primary ON payload only if not already triggered
-            log.debug("Dispatching MQTT publish for trigger payload...")
-            await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
-        else:
-            log.info("Topic %s is already in triggered state. Extending reset timer (Variant B) without duplicate ON publish.", topic)
-            self.log_action("trigger (extended)", mail_from, topic, config["MQTT_PAYLOAD"], True)
+            if topic in self.handles:
+                self.handles.pop(topic).cancel()
+
+            if self.reset_time > 0:
+                reset_time_seconds = float(self.reset_time)
+                self.handles[topic] = self.loop.call_later(
+                    reset_time_seconds, self._trigger_reset, topic
+                )
 
         # Determine whether to save attachments - always save if enabled
         should_save = config["SAVE_ATTACHMENTS"]
         if should_save:
             log.debug("Dispatching background attachment save task...")
-            # Schedule non-blocking background task to parse email and save attachments
+            is_triggered = topic in self.handles
             task = self.loop.create_task(
                 self._process_attachments_background(envelope.original_content, topic, mail_from, is_triggered)
             )
             self.background_tasks.add(task)
         else:
             log.debug("Skipping attachment storage (disabled in config)")
-
-        # Cancel existing reset timer if active and reschedule for new window (sliding window)
-        if topic in self.handles:
-            log.debug("Cancelling existing reset timer for topic: %s", topic)
-            self.handles.pop(topic).cancel()
-
-        # Schedule a new reset timer in seconds (self.reset_time is in milliseconds)
-        if self.reset_time > 0:
-            reset_time_seconds = self.reset_time / 1000.0
-            log.debug("Scheduling topic reset in %.3f seconds (%d ms): %s", reset_time_seconds, self.reset_time, topic)
-            self.handles[topic] = self.loop.call_later(
-                reset_time_seconds, self._trigger_reset, topic
-            )
 
         return "250 Message accepted for delivery"
 
@@ -965,6 +1043,7 @@ class smtp2mqttHandler:
             "uptime_seconds": uptime,
             "uptime_formatted": uptime_formatted,
             "recent_actions": self.recent_actions,
+            "recent_blocked_attempts": getattr(self, "recent_blocked_attempts", []),
             "version": VERSION,
             "latest_version": self.latest_version,
             "update_available": self.update_available,

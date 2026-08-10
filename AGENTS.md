@@ -67,8 +67,8 @@ Stavový soubor `status.json` slouží jako komunikační můstek mezi Python da
 
 ## 6. Časové jednotky pro Auto-Reset (`MQTT_RESET_TIME`)
 
-- `MQTT_RESET_TIME` je v Pythonu i PHP konfiguraci definován v **milisekundách (ms)** (výchozí: `200` ms).
-- V HTML formuláři UI musí být popisek výhradně `MQTT Auto-Reset Čas (ms):` a nápověda udána v milisekundách.
+- `MQTT_RESET_TIME` je v Pythonu i PHP konfiguraci definován v **sekundách (s)** (výchozí: `10` s pro Loxone `Mo` kompatibilitu).
+- V HTML formuláři UI je popisek udán v sekundách.
 
 ---
 

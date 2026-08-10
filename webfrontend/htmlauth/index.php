@@ -23,19 +23,20 @@ $L_ini = LBSystem::readlanguage("language.ini");
 $L = array_merge(is_array($L_ini) ? $L_ini : [], $L_json);
 
 // Plugin version dynamically from LoxBerry config
-$plugin_version = $lbpconfig['PLUGIN']['VERSION'] ?? '1.8.18';
+$plugin_version = $lbpconfig['PLUGIN']['VERSION'] ?? '1.8.24';
 
 // Define paths
 $config_dir = $lbpconfigdir;
-$config_file = $config_dir . "/config.json";
 $log_candidates = [
     $lbplogdir . "/smtp2mqtt.log",
+    "/opt/loxberry/log/plugins/smtp2mqtt/smtp2mqtt.log",
     "/opt/loxberry/log/plugins/smtp2mqtt.log",
-    "/opt/loxberry/log/plugins/smtp2mqtt/smtp2mqtt.log"
+    $lbpdatadir . "/smtp2mqtt.log",
+    __DIR__ . "/smtp2mqtt.log"
 ];
 $log_file = $lbplogdir . "/smtp2mqtt.log";
 foreach ($log_candidates as $l_cand) {
-    if (file_exists($l_cand) && filesize($l_cand) > 0) {
+    if (file_exists($l_cand)) {
         $log_file = $l_cand;
         break;
     }
@@ -142,6 +143,27 @@ if (file_exists($config_file)) {
     if (is_array($saved_config)) {
         $config = array_merge($defaults, $saved_config);
     }
+}
+
+if (!isset($config['FIREWALL_RULES']) || !is_array($config['FIREWALL_RULES'])) {
+    $rules = [];
+    $allowed_str = $config['ALLOWED_IPS'] ?? '';
+    if (!empty($allowed_str)) {
+        $parts = explode(',', $allowed_str);
+        foreach ($parts as $p) {
+            $p = trim($p);
+            if (!empty($p)) {
+                $label = '';
+                if ($p === '192.168.0.0/16') $label = 'Privátní LAN 192.168.x.x';
+                elseif ($p === '10.0.0.0/8') $label = 'Privátní LAN 10.x.x.x';
+                elseif ($p === '172.16.0.0/12') $label = 'Privátní LAN 172.16.x.x';
+                elseif ($p === '127.0.0.1') $label = 'Localhost';
+                elseif ($p === '*') $label = 'Bez omezení (Všechny IP)';
+                $rules[] = ['ip' => $p, 'label' => $label];
+            }
+        }
+    }
+    $config['FIREWALL_RULES'] = $rules;
 }
 
 // Handle Clean AJAX JSON Endpoint
@@ -353,7 +375,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         $config['WEB_PORT'] = intval($_POST['web_port'] ?? 8080);
         $config['SMTP_PORT'] = intval($_POST['smtp_port'] ?? 1025);
         $config['SMTP_HOST'] = trim($_POST['smtp_host'] ?? '0.0.0.0');
-        $config['ALLOWED_IPS'] = trim($_POST['allowed_ips'] ?? '192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 127.0.0.1');
+        if (isset($_POST['rule_ip']) && is_array($_POST['rule_ip'])) {
+            $rules = [];
+            $ip_list = [];
+            $rule_ips = $_POST['rule_ip'];
+            $rule_labels = $_POST['rule_label'] ?? [];
+            for ($i = 0; $i < count($rule_ips); $i++) {
+                $rip = trim($rule_ips[$i]);
+                $rlabel = trim($rule_labels[$i] ?? '');
+                if (!empty($rip)) {
+                    $rules[] = ['ip' => $rip, 'label' => $rlabel];
+                    $ip_list[] = $rip;
+                }
+            }
+            $config['FIREWALL_RULES'] = $rules;
+            $config['ALLOWED_IPS'] = implode(', ', $ip_list);
+        } else {
+            $raw_allowed = trim($_POST['allowed_ips'] ?? '192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 127.0.0.1');
+            $config['ALLOWED_IPS'] = $raw_allowed;
+            $rules = [];
+            if (!empty($raw_allowed)) {
+                $parts = explode(',', $raw_allowed);
+                foreach ($parts as $p) {
+                    $p = trim($p);
+                    if (!empty($p)) {
+                        $rules[] = ['ip' => $p, 'label' => ''];
+                    }
+                }
+            }
+            $config['FIREWALL_RULES'] = $rules;
+        }
 
         $use_auto = isset($_POST['use_loxberry_mqtt']);
         $config['USE_LOXBERRY_MQTT'] = $use_auto ? "True" : "False";
@@ -676,9 +727,68 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <!-- Security & Firewall Settings -->
                     <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🔒 Bezpečnost & IP Firewall</h4>
                     <div style="margin-bottom: 25px;">
-                        <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Povolené IP adresy a podsítě (ALLOWED_IPS):</label>
-                        <input type="text" name="allowed_ips" id="allowed_ips" value="<?php echo htmlspecialchars($config['ALLOWED_IPS']); ?>" placeholder="192.168.1.0/24, 10.0.0.5, 127.0.0.1" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
-                        <span class="field-hint">Čárkou oddělené IP/CIDR adresy kamer. Zadejte * pro bezstarostný příjem ze všech IP.</span>
+                        <?php 
+                        $recent_blocked = $status_data['recent_blocked_attempts'] ?? [];
+                        if (!empty($recent_blocked)): 
+                        ?>
+                        <!-- Blocked Attempts Scanner Alert -->
+                        <div id="blocked-attempts-alert" style="margin-bottom: 18px; padding: 14px; background: #fffbebf5; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b; border-radius: 8px;">
+                            <div style="font-weight: 700; color: #92400e; font-size: 0.92rem; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                                <span>⚠️ Detekována odmítnutá SMTP spojení z neoprávněných IP adres:</span>
+                            </div>
+                            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                                <?php foreach ($recent_blocked as $blocked): ?>
+                                    <div style="display: flex; align-items: center; gap: 8px; background: white; border: 1px solid #fde68a; padding: 6px 12px; border-radius: 6px; font-size: 0.88rem;">
+                                        <span style="font-family: monospace; font-weight: 700; color: #b45309;"><?php echo htmlspecialchars($blocked['ip']); ?></span>
+                                        <span style="color: #92400e; font-size: 0.8rem;">(<?php echo intval($blocked['count']); ?>× pokus, <?php echo htmlspecialchars($blocked['timestamp']); ?>)</span>
+                                        <button type="button" onclick="allowBlockedIp('<?php echo htmlspecialchars($blocked['ip']); ?>')" style="background: #10b981; color: white; border: none; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: background 0.2s;" onmouseover="this.style.background='#059669'" onmouseout="this.style.background='#10b981'">
+                                            + Povolit zařízení
+                                        </button>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+
+                        <!-- Quick Presets -->
+                        <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;">
+                            <span style="font-weight: 600; font-size: 0.85rem; color: #475569;">Rychlé šablony:</span>
+                            <button type="button" onclick="addPresetRule('192.168.0.0/16', 'Privátní síť 192.168.x.x')" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">+ Celá LAN (192.168.0.0/16)</button>
+                            <button type="button" onclick="addPresetRule('10.0.0.0/8', 'Privátní síť 10.x.x.x')" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">+ Celá LAN (10.0.0.0/8)</button>
+                            <button type="button" onclick="addPresetRule('127.0.0.1', 'Localhost')" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">+ Localhost (127.0.0.1)</button>
+                            <button type="button" onclick="addPresetRule('*', 'Bez omezení (Všechny IP)')" style="background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; border-radius: 4px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">+ Povolit Vše (*)</button>
+                        </div>
+
+                        <!-- Table Rules Manager Mode -->
+                        <div id="firewall-table-mode">
+                            <table id="firewall-rules-table" style="width: 100%; border-collapse: collapse; background: white; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; margin-bottom: 10px;">
+                                <thead>
+                                    <tr style="background: #f8fafc; text-align: left; border-bottom: 1px solid #cbd5e1; font-size: 0.85rem; color: #475569;">
+                                        <th style="padding: 10px 12px; width: 42%;">IP adresa / CIDR rozsah</th>
+                                        <th style="padding: 10px 12px; width: 43%;">Název zařízení / Poznámka</th>
+                                        <th style="padding: 10px 12px; width: 15%; text-align: center;">Akce</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="firewall-rules-tbody">
+                                    <!-- Dynamic rows -->
+                                </tbody>
+                            </table>
+
+                            <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap;">
+                                <input type="text" id="new-rule-ip" placeholder="IP adresa nebo CIDR rozsah (např. 10.0.40.103 nebo 192.168.1.0/24)" style="flex: 1; min-width: 220px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.88rem;">
+                                <input type="text" id="new-rule-label" placeholder="Poznámka (např. Vchodová kamera)" style="flex: 1; min-width: 180px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.88rem;">
+                                <button type="button" onclick="addCustomRuleFromInput()" style="background: #2e7d32; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 0.88rem;">+ Přidat pravidlo</button>
+                            </div>
+                        </div>
+
+                        <!-- Expert Raw Text Mode Toggle -->
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                            <a href="javascript:void(0)" onclick="toggleFirewallExpertMode()" id="firewall-expert-toggle" style="font-size: 0.85rem; color: #0284c7; text-decoration: underline; font-weight: 600;">⚙️ Přepnout na Expertní surový text (ALLOWED_IPS)</a>
+                        </div>
+                        <div id="firewall-expert-mode" style="display: none; margin-top: 10px;">
+                            <input type="text" name="allowed_ips" id="allowed_ips" value="<?php echo htmlspecialchars($config['ALLOWED_IPS']); ?>" placeholder="192.168.1.0/24, 10.0.0.5, 127.0.0.1" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: monospace;">
+                            <span class="field-hint">Čárkou oddělené IP/CIDR adresy kamer. V expertním režimu můžete upravovat celý řetězec přímo.</span>
+                        </div>
                     </div>
 
                     <!-- MQTT Broker Settings -->
@@ -730,15 +840,26 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         </div>
 
                         <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Auto-Reset Čas (ms):</label>
-                            <input type="number" name="mqtt_reset_time" value="<?php echo htmlspecialchars($config['MQTT_RESET_TIME']); ?>" required min="0" step="10" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
-                            <span class="field-hint">Po kolika milisekundách se stav automaticky vrátí na OFF (výchozí: 200 ms). Zadejte 0 pro vypnutí resetu.</span>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Auto-Reset Čas (sekundy):</label>
+                            <input type="number" name="mqtt_reset_time" value="<?php echo htmlspecialchars($config['MQTT_RESET_TIME']); ?>" required min="0" step="1" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                            <span class="field-hint">Po kolika sekundách se stav automaticky vrátí na OFF (výchozí 10 s pro Loxone Mo vstup, 0 = bez auto-resetu).</span>
                         </div>
 
                         <div>
                             <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Reset Payload:</label>
                             <input type="text" name="mqtt_reset_payload" value="<?php echo htmlspecialchars($config['MQTT_RESET_PAYLOAD']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
+                    </div>
+
+                    <!-- Hikvision Latency & Optimization Card -->
+                    <div style="margin-bottom: 25px; padding: 16px; background: #0f172a; color: #f8fafc; border-radius: 8px; border-left: 4px solid #38bdf8; font-size: 0.9rem;">
+                        <h4 style="margin: 0 0 10px 0; color: #38bdf8; font-size: 1rem;"><i class="fa fa-tachometer"></i> Doporučené nastavení Hikvision kamer pro minimální latenci (&lt; 10 ms)</h4>
+                        <ul style="margin: 0; padding-left: 20px; line-height: 1.6; color: #cbd5e1;">
+                            <li><b>Pevná IP adresa LoxBerry:</b> V nastavení SMTP v kameře zadejte přímou IP adresu LoxBerry (např. <code>10.0.20.100</code>) místo názvu domény. Zabráníte zpoždění z DNS dotazů.</li>
+                            <li><b>Vypnutí přílohy fotek (Attached Image):</b> Pokud nepotřebujete fotky v e-mailu, vypněte v kameře volbu <i>Attached Image</i>. Zkrátíte čas odeslání z 3 sekund na 10 ms.</li>
+                            <li><b>Minimální e-mailový interval:</b> V nastavení e-mailu v kameře nastavte <i>Interval</i> na minimum (0–2 s).</li>
+                            <li><b>Vstup Mo v Loxone (Osvětlení):</b> Pro přímé zapojení do vstupu <code>Mo</code> bloku Automatické osvětlení je ideální <b>Auto-reset 10 s</b>. Ponechá světlo sepnuté po dobu pohybu a po odchodu korektně zhasne.</li>
+                        </ul>
                     </div>
 
                     <!-- Diagnostics & Fast Actions Bar -->
@@ -860,6 +981,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <button onclick="setLogLevelFilter('ERROR')" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #dc2626;">🔴 Chyby</button>
                     <button onclick="setLogLevelFilter('WARN')" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #d97706;">🟡 Varování</button>
                     <button onclick="copyLogToClipboard()" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">📋 Kopírovat</button>
+                    <a href="/admin/system/logmanager.php?package=smtp2mqtt" target="_blank" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; background: #e0f2fe; color: #0369a1; border-color: #7dd3fc; text-decoration: none;">🔍 Otevřít v LoxBerry Log Manageru</a>
                     <a href="?action=download_log" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">📥 Stáhnout</a>
                     <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #dc2626;">🧹 Vyčistit</a>
                 </div>
@@ -972,6 +1094,125 @@ $active_tab = $_GET['tab'] ?? 'settings';
 
 <script>
     const detectedMqtt = <?php echo json_encode($detected_mqtt); ?>;
+
+    // Firewall Rules Table Management
+    let firewallRules = <?php echo json_encode($config['FIREWALL_RULES'] ?? []); ?>;
+
+    function renderFirewallTable() {
+        const tbody = document.getElementById('firewall-rules-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (firewallRules.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #94a3b8; padding: 15px; font-style: italic;">Žádná aktivní pravidla. SMTP server je přístupný ze všech IP adres (*).</td></tr>`;
+            syncAllowedIpsFromTable();
+            return;
+        }
+
+        firewallRules.forEach((rule, idx) => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #e2e8f0';
+            tr.innerHTML = `
+                <td style="padding: 8px 12px; font-family: monospace; font-weight: 600; color: #1e293b;">
+                    <input type="text" name="rule_ip[]" value="${escapeHtml(rule.ip)}" required oninput="syncAllowedIpsFromTable()" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 0.88rem;">
+                </td>
+                <td style="padding: 8px 12px;">
+                    <input type="text" name="rule_label[]" value="${escapeHtml(rule.label || '')}" placeholder="Komentář / Název zařízení" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-size: 0.88rem;">
+                </td>
+                <td style="padding: 8px 12px; text-align: center;">
+                    <button type="button" onclick="removeFirewallRule(${idx})" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 0.85rem;" title="Smazat pravidlo">🗑️ Smazat</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+        syncAllowedIpsFromTable();
+    }
+
+    function escapeHtml(str) {
+        return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    function addFirewallRule(ip, label = '') {
+        ip = (ip || '').trim();
+        if (!ip) return;
+        const existing = firewallRules.find(r => r.ip === ip);
+        if (existing) {
+            showToast('⚠️ Pravidlo pro IP ' + ip + ' již v seznamu existuje.', false);
+            return;
+        }
+        firewallRules.push({ ip: ip, label: label });
+        renderFirewallTable();
+        showToast('✅ Pravidlo ' + ip + ' bylo přidáno do seznamu.', true);
+    }
+
+    function removeFirewallRule(idx) {
+        if (idx >= 0 && idx < firewallRules.length) {
+            firewallRules.splice(idx, 1);
+            renderFirewallTable();
+        }
+    }
+
+    function addPresetRule(ip, label) {
+        addFirewallRule(ip, label);
+    }
+
+    function addCustomRuleFromInput() {
+        const ipInput = document.getElementById('new-rule-ip');
+        const labelInput = document.getElementById('new-rule-label');
+        if (!ipInput) return;
+        const ip = ipInput.value.trim();
+        const label = labelInput ? labelInput.value.trim() : '';
+        if (!ip) {
+            showToast('Zadejte prosím platnou IP adresu nebo CIDR rozsah.', false);
+            return;
+        }
+        addFirewallRule(ip, label);
+        ipInput.value = '';
+        if (labelInput) labelInput.value = '';
+    }
+
+    function allowBlockedIp(ip) {
+        addFirewallRule(ip, 'Kamera (z neoprávněného pokusu)');
+    }
+
+    function syncAllowedIpsFromTable() {
+        const inputs = document.querySelectorAll('input[name="rule_ip[]"]');
+        let ips = [];
+        if (inputs && inputs.length > 0) {
+            inputs.forEach(inp => { if (inp.value.trim()) ips.push(inp.value.trim()); });
+        } else {
+            ips = firewallRules.map(r => r.ip).filter(ip => ip.length > 0);
+        }
+        const allowedInput = document.getElementById('allowed_ips');
+        if (allowedInput) {
+            allowedInput.value = ips.join(', ');
+        }
+    }
+
+    function toggleFirewallExpertMode() {
+        const tableMode = document.getElementById('firewall-table-mode');
+        const expertMode = document.getElementById('firewall-expert-mode');
+        const toggleBtn = document.getElementById('firewall-expert-toggle');
+        if (!tableMode || !expertMode) return;
+
+        if (expertMode.style.display === 'none' || expertMode.style.display === '') {
+            syncAllowedIpsFromTable();
+            tableMode.style.display = 'none';
+            expertMode.style.display = 'block';
+            if (toggleBtn) toggleBtn.textContent = '📋 Přepnout na Vizuální Tabulkový Manažer';
+        } else {
+            const rawVal = document.getElementById('allowed_ips')?.value || '';
+            const parts = rawVal.split(',').map(p => p.trim()).filter(p => p.length > 0);
+            firewallRules = parts.map(p => {
+                const existing = firewallRules.find(r => r.ip === p);
+                return { ip: p, label: existing ? existing.label : '' };
+            });
+            renderFirewallTable();
+            expertMode.style.display = 'none';
+            tableMode.style.display = 'block';
+            if (toggleBtn) toggleBtn.textContent = '⚙️ Přepnout na Expertní surový text (ALLOWED_IPS)';
+        }
+    }
 
     function toggleMqttFields() {
         const isAuto = document.getElementById('use_loxberry_mqtt')?.checked;
@@ -1138,6 +1379,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
 
     document.addEventListener('DOMContentLoaded', () => {
         toggleMqttFields();
+        renderFirewallTable();
         const logBox = document.getElementById('log-box');
         if (logBox) {
             logBox.scrollTop = logBox.scrollHeight;

@@ -78,7 +78,7 @@ defaults: Dict[str, Union[str, int]] = {
     "MQTT_PASSWORD": "",
     "MQTT_TOPIC": "smtp2mqtt",
     "MQTT_PAYLOAD": "ON",
-    "MQTT_RESET_TIME": "200",
+    "MQTT_RESET_TIME": "10",
     "MQTT_RESET_PAYLOAD": "OFF",
     "SAVE_ATTACHMENTS": "False",
     "SAVE_ATTACHMENTS_DURING_RESET_TIME": "False",
@@ -302,27 +302,40 @@ ch = logging.StreamHandler(sys.stdout)
 ch.setFormatter(formatter)
 log.addHandler(ch)
 
+class FlushingFileHandler(logging.FileHandler):
+    """Custom FileHandler that flushes log records to disk immediately."""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 # File logging path resolution (LoxBerry log dir prioritized if available)
 log_dir = loxberry_paths.get("LBPLOG") if "LBPLOG" in loxberry_paths else ("log" if os.path.exists("log") else None)
+if not log_dir and loxberry_paths.get("LBHOME"):
+    log_dir = os.path.join(loxberry_paths["LBHOME"], "log", "plugins", "smtp2mqtt")
+
 if log_dir:
     try:
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, "smtp2mqtt.log")
-        log.info(f"Setting up file logger at {log_file} (loglevel: {logging.getLevelName(level)})")
-        fh = logging.FileHandler(log_file)
+        fh = FlushingFileHandler(log_file, encoding="utf-8")
         fh.setFormatter(formatter)
         log.addHandler(fh)
+        try:
+            os.chmod(log_file, 0o666)
+        except Exception:
+            pass
+        log.info(f"Setting up file logger at {log_file} (loglevel: {logging.getLevelName(level)})")
     except Exception as e:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.22"
+VERSION = "1.8.24"
 
 
 class smtp2mqttHandler:
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self.loop = loop
-        self.reset_time: int = config["MQTT_RESET_TIME"]
+        self.reset_time: float = float(config["MQTT_RESET_TIME"])
         self.handles: Dict[str, asyncio.TimerHandle] = {}
         self.background_tasks = set()
         
@@ -332,6 +345,7 @@ class smtp2mqttHandler:
         self.last_publish_success: Optional[bool] = None
         self.last_publish_time: Optional[str] = None
         self.recent_actions: List[Dict[str, Any]] = []  # List of dicts
+        self.recent_blocked_attempts: List[Dict[str, Any]] = []  # Track blocked IPs
         self.latest_version: Optional[str] = None
         self.update_available: bool = False
         self.version_check_status: str = "pending"
@@ -421,7 +435,13 @@ class smtp2mqttHandler:
         self.save_status_file()
 
     def save_status_file(self) -> None:
-        """Saves current status JSON to status.json on disk for PHP WebAdmin."""
+        """Saves current status JSON to status.json on disk for PHP WebAdmin (non-blocking)."""
+        if hasattr(self, "loop") and self.loop and self.loop.is_running():
+            self.loop.create_task(asyncio.to_thread(self._write_status_file_sync))
+        else:
+            self._write_status_file_sync()
+
+    def _write_status_file_sync(self) -> None:
         data_dir = get_data_dir()
         try:
             os.makedirs(data_dir, exist_ok=True)
@@ -485,15 +505,77 @@ class smtp2mqttHandler:
         peer_ip = session.peer[0] if session and hasattr(session, "peer") and session.peer else None
         if not self.is_ip_allowed(peer_ip):
             log.warning("Rejected SMTP connection from unauthorized IP: %s", peer_ip)
+            if peer_ip:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if not hasattr(self, "recent_blocked_attempts"):
+                    self.recent_blocked_attempts = []
+                found = False
+                for attempt in self.recent_blocked_attempts:
+                    if attempt.get("ip") == peer_ip:
+                        attempt["count"] = attempt.get("count", 1) + 1
+                        attempt["timestamp"] = timestamp
+                        found = True
+                        break
+                if not found:
+                    self.recent_blocked_attempts.insert(0, {
+                        "ip": peer_ip,
+                        "timestamp": timestamp,
+                        "count": 1
+                    })
+                    if len(self.recent_blocked_attempts) > 10:
+                        self.recent_blocked_attempts.pop()
+                self.log_action("security", peer_ip, "smtp/connect", "554 IP Blocked", False)
             return f"554 5.7.1 Access denied: IP address {peer_ip} not allowed"
         return "220 Welcome to smtp2mqtt"
+
+    async def handle_MAIL(self, server: Any, session: Any, envelope: Any, address: str, mail_options: List[str]) -> str:
+        """Processes MAIL FROM command with instant Early-Trigger (< 10 ms latency)."""
+        envelope.mail_from = address
+        if hasattr(envelope, "mail_options") and isinstance(envelope.mail_options, list):
+            envelope.mail_options.extend(mail_options)
+
+        log.info("Received SMTP MAIL FROM from %s", address)
+
+        # Construct topic based on sender, sanitizing dangerous MQTT wildcard characters
+        sanitized_sender = (
+            address.replace("@", "-")
+            .replace("/", "_")
+            .replace("+", "_")
+            .replace("#", "_")
+        )
+        topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
+        setattr(envelope, "_early_triggered_topic", topic)
+
+        # Check if topic is currently triggered (in reset time window)
+        is_triggered = topic in self.handles
+
+        if not is_triggered:
+            log.debug("Early-dispatching MQTT publish for trigger payload on MAIL FROM...")
+            await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", address)
+        else:
+            log.info("Topic %s is already in triggered state. Extending reset timer (Variant B) without duplicate ON publish.", topic)
+            self.log_action("trigger (extended)", address, topic, config["MQTT_PAYLOAD"], True)
+
+        # Cancel existing reset timer if active and reschedule for new window (sliding window)
+        if topic in self.handles:
+            log.debug("Cancelling existing reset timer for topic: %s", topic)
+            self.handles.pop(topic).cancel()
+
+        # Schedule a new reset timer in seconds
+        if self.reset_time > 0:
+            reset_time_seconds = float(self.reset_time)
+            log.debug("Scheduling topic reset in %.3f seconds: %s", reset_time_seconds, topic)
+            self.handles[topic] = self.loop.call_later(
+                reset_time_seconds, self._trigger_reset, topic
+            )
+
+        return "250 OK"
 
     async def handle_DATA(self, server: Any, session: Any, envelope: Any) -> str:
         """Processes incoming SMTP email messages."""
         mail_from = envelope.mail_from
-        log.info("Received SMTP message from %s", mail_from)
+        log.info("Received SMTP DATA payload from %s", mail_from)
 
-        # Construct topic based on sender, sanitizing dangerous MQTT wildcard characters
         sanitized_sender = (
             mail_from.replace("@", "-")
             .replace("/", "_")
@@ -502,41 +584,37 @@ class smtp2mqttHandler:
         )
         topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
 
-        # Check if topic is currently triggered (in reset time window)
-        is_triggered = topic in self.handles
+        # Fallback check: if handle_MAIL was not called or didn't trigger
+        early_triggered_topic = getattr(envelope, "_early_triggered_topic", None)
+        if early_triggered_topic != topic:
+            is_triggered = topic in self.handles
+            if not is_triggered:
+                log.debug("Fallback dispatching MQTT publish for trigger payload in handle_DATA...")
+                await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
+            else:
+                log.info("Topic %s is already in triggered state in handle_DATA. Extending reset timer.", topic)
+                self.log_action("trigger (extended)", mail_from, topic, config["MQTT_PAYLOAD"], True)
 
-        if not is_triggered:
-            # Publish primary ON payload only if not already triggered
-            log.debug("Dispatching MQTT publish for trigger payload...")
-            await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", mail_from)
-        else:
-            log.info("Topic %s is already in triggered state. Extending reset timer (Variant B) without duplicate ON publish.", topic)
-            self.log_action("trigger (extended)", mail_from, topic, config["MQTT_PAYLOAD"], True)
+            if topic in self.handles:
+                self.handles.pop(topic).cancel()
+
+            if self.reset_time > 0:
+                reset_time_seconds = float(self.reset_time)
+                self.handles[topic] = self.loop.call_later(
+                    reset_time_seconds, self._trigger_reset, topic
+                )
 
         # Determine whether to save attachments - always save if enabled
         should_save = config["SAVE_ATTACHMENTS"]
         if should_save:
             log.debug("Dispatching background attachment save task...")
-            # Schedule non-blocking background task to parse email and save attachments
+            is_triggered = topic in self.handles
             task = self.loop.create_task(
                 self._process_attachments_background(envelope.original_content, topic, mail_from, is_triggered)
             )
             self.background_tasks.add(task)
         else:
             log.debug("Skipping attachment storage (disabled in config)")
-
-        # Cancel existing reset timer if active and reschedule for new window (sliding window)
-        if topic in self.handles:
-            log.debug("Cancelling existing reset timer for topic: %s", topic)
-            self.handles.pop(topic).cancel()
-
-        # Schedule a new reset timer in seconds (self.reset_time is in milliseconds)
-        if self.reset_time > 0:
-            reset_time_seconds = self.reset_time / 1000.0
-            log.debug("Scheduling topic reset in %.3f seconds (%d ms): %s", reset_time_seconds, self.reset_time, topic)
-            self.handles[topic] = self.loop.call_later(
-                reset_time_seconds, self._trigger_reset, topic
-            )
 
         return "250 Message accepted for delivery"
 
@@ -965,6 +1043,7 @@ class smtp2mqttHandler:
             "uptime_seconds": uptime,
             "uptime_formatted": uptime_formatted,
             "recent_actions": self.recent_actions,
+            "recent_blocked_attempts": getattr(self, "recent_blocked_attempts", []),
             "version": VERSION,
             "latest_version": self.latest_version,
             "update_available": self.update_available,
@@ -983,820 +1062,41 @@ class smtp2mqttHandler:
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     <style>
         :root {
-            /* Refined Premium High-Contrast Loxone Palette */
-            --bg-color: #0b0f14;          /* Deep rich dark blue-black base */
-            --card-bg: #161b22;           /* Crisp secondary charcoal background */
-            --border-color: #30363d;       /* High-visibility contrast borders */
-            --border-focus: #444c56;       /* Elevated active border color */
-            --text-primary: #f0f6fc;       /* Off-white primary header for maximum readability */
-            --text-secondary: #c9d1d9;     /* Light slate-gray for perfectly readable regular text */
-            --text-muted: #8b949e;         /* Medium-gray for muted/secondary information */
+            --bg-color: #0b0f14;
+            --card-bg: #161b22;
+            --border-color: #30363d;
+            --border-focus: #444c56;
+            --text-primary: #f0f6fc;
+            --text-secondary: #c9d1d9;
+            --text-muted: #8b949e;
             
-            --accent-primary: #7ec127;     /* Vibrant Loxone Green */
+            --accent-primary: #7ec127;
             --accent-glow: rgba(126, 193, 39, 0.12);
             --accent-hover: #90d635;
             
             --success: #7ec127;
             --success-glow: rgba(126, 193, 39, 0.15);
-            --danger: #ff7b72;             /* High-contrast pastel red for reliable dark mode errors */
-            --danger-glow: rgba(255, 123, 114, 0.15);
-            --system-color: #f0883e;       /* Warm orange for system actions */
-            --system-glow: rgba(240, 136, 62, 0.12);
-        }
-        body.theme-loxberry, html[data-theme="loxberry"] {
-            --bg-color: #f8fafc;
-            --card-bg: #ffffff;
-            --border-color: #e2e8f0;
-            --border-focus: #cbd5e1;
-            --text-primary: #0f172a;
-            --text-secondary: #334155;
-            --text-muted: #64748b;
-            --accent-primary: #6fb738;
-            --accent-glow: rgba(111, 183, 56, 0.15);
-            --accent-hover: #5ea02f;
-            --success: #2e7d32;
-            --danger: #dc2626;
-            --system-color: #d97706;
-        }
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-secondary);
-            min-height: 100vh;
-            padding: 3rem 2rem;
-            display: flex;
-            justify-content: center;
-        }
-        /* Custom Modern Scrollbars for extreme premium feel */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: var(--bg-color);
-        }
-        ::-webkit-scrollbar-thumb {
-            background: var(--border-color);
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--border-focus);
-        }
-
-        .container {
-            width: 100%;
-            max-width: 1200px;
-            display: flex;
-            flex-direction: column;
-            gap: 2.5rem;
-        }
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding-bottom: 2rem;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .title-area h1 {
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 2.1rem;
-            font-weight: 700;
-            color: var(--accent-primary);
-            text-shadow: 0 0 15px rgba(126, 193, 39, 0.35);
-            margin-bottom: 0.35rem;
-            letter-spacing: -0.01em;
-        }
-        .title-area p {
-            color: var(--text-muted);
-            font-size: 0.95rem;
-            font-weight: 500;
-        }
-        .live-indicator {
-            display: flex;
-            align-items: center;
-            gap: 0.625rem;
-            background: var(--accent-glow);
-            border: 1px solid rgba(126, 193, 39, 0.4);
-            color: var(--accent-primary);
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 0.8rem;
-            font-weight: 600;
-            letter-spacing: 0.08em;
-            box-shadow: 0 0 10px rgba(126, 193, 39, 0.1);
-        }
-        .live-dot {
-            width: 8px;
-            height: 8px;
-            background-color: var(--accent-primary);
-            border-radius: 50%;
-            box-shadow: 0 0 8px var(--accent-primary);
-            animation: pulse-green 2s infinite;
-        }
-        @keyframes pulse-green {
-            0% { box-shadow: 0 0 0 0 rgba(126, 193, 39, 0.5); }
-            70% { box-shadow: 0 0 0 8px rgba(126, 193, 39, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(126, 193, 39, 0); }
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 1.75rem;
-        }
-        .card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-left: 4px solid var(--accent-primary);
-            border-radius: 8px;
-            padding: 1.75rem;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-            transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
-        }
-        .card:hover {
-            border-color: var(--border-focus);
-            box-shadow: 0 6px 30px rgba(126, 193, 39, 0.1);
-            transform: translateY(-2px);
-        }
-        .card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 1.25rem;
-        }
-        .card-title {
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 0.875rem;
-            color: var(--text-muted);
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-        }
-        .card-icon {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 2.25rem;
-            height: 2.25rem;
-            background: rgba(255, 255, 255, 0.04);
-            border-radius: 6px;
-            color: var(--text-muted);
-        }
-        .card-value {
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 2rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-            color: var(--text-primary);
-        }
-        .card-subtext {
-            font-size: 0.875rem;
-            color: var(--text-muted);
-            font-weight: 400;
-        }
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.35rem 0.75rem;
-            border-radius: 6px;
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 0.8rem;
-            font-weight: 600;
-            letter-spacing: 0.02em;
-        }
-        .status-badge.success {
-            background-color: var(--success-glow);
-            color: var(--accent-primary);
-            border: 1px solid rgba(126, 193, 39, 0.4);
-        }
-        .status-badge.danger {
-            background-color: var(--danger-glow);
-            color: var(--danger);
-            border: 1px solid rgba(255, 123, 114, 0.4);
-        }
-        .status-badge.secondary {
-            background-color: rgba(255, 255, 255, 0.03);
-            color: var(--text-secondary);
-            border: 1px solid var(--border-color);
-        }
-        .panel {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        .panel-header {
-            padding: 1.75rem 2rem;
-            border-bottom: 1px solid var(--border-color);
-            background-color: rgba(0, 0, 0, 0.15);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .panel-title {
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            letter-spacing: 0.02em;
-        }
-        .table-container {
-            overflow-x: auto;
-            max-height: 480px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-            font-size: 0.95rem;
-        }
-        th {
-            padding: 1.25rem 2rem;
-            font-family: 'Share Tech Mono', monospace;
-            font-weight: 600;
-            color: var(--text-muted);
-            border-bottom: 2px solid var(--border-color);
-            background-color: rgba(11, 15, 20, 0.8);
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        td {
-            padding: 1.25rem 2rem;
-            border-bottom: 1px solid var(--border-color);
-            color: var(--text-secondary);
-            vertical-align: middle;
-        }
-        tr:last-child td {
-            border-bottom: none;
-        }
-        tr:hover td {
-            background-color: rgba(255, 255, 255, 0.015);
-        }
-        .type-badge {
-            display: inline-flex;
-            padding: 0.25rem 0.625rem;
-            border-radius: 4px;
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 0.75rem;
-            font-weight: 700;
-            letter-spacing: 0.08em;
-        }
-        .type-badge.trigger {
-            background-color: var(--accent-glow);
-            color: var(--accent-primary);
-            border: 1px solid rgba(126, 193, 39, 0.4);
-        }
-        .type-badge.reset {
-            background-color: rgba(255, 255, 255, 0.04);
-            color: var(--text-secondary);
-            border: 1px solid var(--border-color);
-        }
-        .type-badge.system {
-            background-color: var(--system-glow);
-            color: var(--system-color);
-            border: 1px solid rgba(240, 136, 62, 0.4);
-        }
-        .empty-state {
-            padding: 5rem 2rem;
-            text-align: center;
-            color: var(--text-muted);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 1rem;
-            font-size: 1rem;
-        }
-        .empty-state svg {
-            color: var(--text-muted);
-            opacity: 0.5;
-            margin-bottom: 0.5rem;
-        }
-        
-        /* Modern Attachment Download Capsules */
-        .attachment-item {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            padding: 0.5rem 0.75rem;
-            transition: border-color 0.2s, background-color 0.2s;
-        }
-        .attachment-item:hover {
-            border-color: var(--accent-primary);
-            background: rgba(126, 193, 39, 0.04);
-        }
-        .attachment-link {
-            transition: color 0.2s;
-        }
-        .update-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.25rem 0.625rem;
-            border-radius: 6px;
-            font-family: 'Share Tech Mono', monospace;
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-decoration: none;
-            letter-spacing: 0.02em;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .update-badge.warning {
-            background-color: rgba(240, 136, 62, 0.12);
-            color: var(--system-color);
-            border: 1px solid rgba(240, 136, 62, 0.4);
-            box-shadow: 0 0 10px rgba(240, 136, 62, 0.05);
-        }
-        .update-badge.warning:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 0 15px rgba(240, 136, 62, 0.2);
-            background-color: rgba(240, 136, 62, 0.18);
-        }
-        .update-badge.success-badge {
-            background-color: rgba(126, 193, 39, 0.08);
-            color: var(--accent-primary);
-            border: 1px solid rgba(126, 193, 39, 0.25);
-        }
-        .update-badge.pending-badge {
-            background-color: rgba(255, 255, 255, 0.04);
-            color: var(--text-muted);
-            border: 1px solid var(--border-color);
-        }
-        .update-badge.failed-badge {
-            background-color: rgba(239, 68, 68, 0.04);
-            color: rgba(239, 68, 68, 0.85);
-            border: 1px solid rgba(239, 68, 68, 0.25);
-            cursor: help;
-        }
-        .update-pulse-gray {
-            width: 6px;
-            height: 6px;
-            background-color: var(--text-muted);
-            border-radius: 50%;
-            box-shadow: 0 0 6px var(--text-muted);
-            margin-right: 6px;
-            animation: pulse-gray 2s infinite;
-        }
-        @keyframes pulse-gray {
-            0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.2); }
-            70% { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
-        }
-        .update-pulse {
-            width: 6px;
-            height: 6px;
-            background-color: var(--system-color);
-            border-radius: 50%;
-            box-shadow: 0 0 6px var(--system-color);
-            margin-right: 6px;
-            animation: pulse-orange 2s infinite;
-        }
-        @keyframes pulse-orange {
-            0% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0.6); }
-            70% { box-shadow: 0 0 0 6px rgba(240, 136, 62, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(240, 136, 62, 0); }
+            --danger: #f85149;
+            --danger-glow: rgba(248, 81, 73, 0.15);
+            --warning: #d29922;
+            --warning-glow: rgba(210, 153, 34, 0.15);
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="title-area" style="display: flex; align-items: center; gap: 1.25rem;">
-                <img src="/logo.svg" alt="logo" style="width: 52px; height: 52px; display: block; filter: drop-shadow(0 0 10px rgba(126, 193, 39, 0.4));" />
-                <div>
-                    <h1 style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-                        smtp2mqtt Gateway
-                        <span class="version-tag" id="version-tag" style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); padding: 0.15rem 0.5rem; border-radius: 4px; font-family: 'Share Tech Mono', monospace; text-shadow: none; letter-spacing: normal; display: inline-block;">v1.6.0</span>
-                        <span id="update-badge-container" style="display: inline-block;"></span>
-                    </h1>
-                    <p>Asynchronous SMTP-to-MQTT Trigger Converter</p>
-                </div>
-            </div>
-            <div class="live-indicator">
-                <div class="live-dot"></div>
-                LIVE STATS
-            </div>
-        </header>
-
-        <div class="stats-grid">
-            <!-- Gateway Status -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">Gateway Uptime</span>
-                    <div class="card-icon">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                    </div>
-                </div>
-                <div class="card-value" id="uptime-text">0h 0m 0s</div>
-                <div class="card-subtext">Total gateway running time</div>
-            </div>
-
-            <!-- SMTP Server Status -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">SMTP Server</span>
-                    <div class="card-icon">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-                    </div>
-                </div>
-                <div class="card-value">
-                    <span id="smtp-status" class="status-badge secondary">Checking...</span>
-                </div>
-                <div class="card-subtext">Listening on port <span id="smtp-port-info" style="font-weight: 600;">-</span></div>
-            </div>
-
-            <!-- MQTT Status -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">MQTT Connection</span>
-                    <div class="card-icon">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-                    </div>
-                </div>
-                <div class="card-value">
-                    <span id="mqtt-status" class="status-badge secondary">Checking...</span>
-                </div>
-                <div class="card-subtext" id="mqtt-broker-info">-</div>
-            </div>
-
-            <!-- Messages Processed -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">Processed Messages</span>
-                    <div class="card-icon">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                    </div>
-                </div>
-                <div class="card-value" id="processed-count">0</div>
-                <div class="card-subtext">Last publish: <span id="last-publish-time" style="font-weight: 600;">Never</span></div>
-            </div>
-        </div>
-
-        <!-- Recent Actions Panel -->
-        <div class="panel">
-            <div class="panel-header">
-                <span class="panel-title">Recent Actions Log (Current Session)</span>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Timestamp</th>
-                            <th>Action Type</th>
-                            <th>Sender (SMTP)</th>
-                            <th>Target Topic (MQTT)</th>
-                            <th>Value</th>
-                            <th>Attachments</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="actions-table-body">
-                        <tr>
-                            <td colspan="7">
-                                <div class="empty-state">
-                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                                    Waiting for API data...
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('theme') === 'loxberry') {
-            document.documentElement.setAttribute('data-theme', 'loxberry');
-            document.body.classList.add('theme-loxberry');
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str)
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
-        }
-
-        function formatUptime(seconds) {
-            const h = Math.floor(seconds / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            const s = seconds % 60;
-            return `${h}h ${m}m ${s}s`;
-        }
-        
-        async function updateStats() {
-            try {
-                const res = await fetch('/api');
-                const data = await res.json();
-                
-                document.getElementById('processed-count').innerText = data.processed_messages_count;
-                document.getElementById('uptime-text').innerText = formatUptime(data.uptime_seconds);
-                document.getElementById('last-publish-time').innerText = data.last_publish_time || 'Never';
-                document.getElementById('mqtt-broker-info').innerText = `${data.mqtt_host}:${data.mqtt_port}`;
-                document.getElementById('smtp-port-info').innerText = data.smtp_port || '-';
-                
-                const versionTag = document.getElementById('version-tag');
-                if (versionTag && data.version) {
-                    versionTag.innerText = `v${data.version}`;
-                }
-                const updateBadgeContainer = document.getElementById('update-badge-container');
-                if (updateBadgeContainer) {
-                    const status = data.version_check_status || 'pending';
-                    if (status === 'pending' || status === 'checking') {
-                        updateBadgeContainer.innerHTML = `
-                            <span class="update-badge pending-badge">
-                                <span class="update-pulse-gray"></span>
-                                Checking updates...
-                            </span>`;
-                    } else if (status === 'success') {
-                        if (data.update_available && data.latest_version) {
-                            updateBadgeContainer.innerHTML = `
-                                <a href="https://github.com/onhala/smtp2mqtt/releases/latest" target="_blank" class="update-badge warning">
-                                    <span class="update-pulse"></span>
-                                    Update Available: v${data.latest_version}
-                                </a>`;
-                        } else {
-                            updateBadgeContainer.innerHTML = `
-                                <span class="update-badge success-badge">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 4px; display: inline-block; vertical-align: middle;"><polyline points="20 6 9 17 4 12"/></svg>
-                                    Up to date
-                                </span>`;
-                        }
-                    } else if (status === 'failed') {
-                        updateBadgeContainer.innerHTML = `
-                            <span class="update-badge failed-badge" title="Failed to check for updates. GitHub API may be rate-limited or offline.">
-                                Update check failed
-                            </span>`;
-                    } else {
-                        updateBadgeContainer.innerHTML = '';
-                    }
-                }
-                
-                const mqttStatusBadge = document.getElementById('mqtt-status');
-                if (data.mqtt_connected) {
-                    mqttStatusBadge.className = 'status-badge success';
-                    mqttStatusBadge.innerHTML = '<span class="live-dot" style="background-color: var(--accent-primary); box-shadow: 0 0 8px var(--accent-primary); animation: pulse-green 2s infinite; width: 6px; height: 6px; margin-right: 4px;"></span>Connected';
-                } else {
-                    mqttStatusBadge.className = 'status-badge danger';
-                    mqttStatusBadge.innerHTML = 'Disconnected';
-                }
-                
-                const smtpStatusBadge = document.getElementById('smtp-status');
-                if (data.smtp_connected) {
-                    smtpStatusBadge.className = 'status-badge success';
-                    smtpStatusBadge.innerHTML = '<span class="live-dot" style="background-color: var(--accent-primary); box-shadow: 0 0 8px var(--accent-primary); animation: pulse-green 2s infinite; width: 6px; height: 6px; margin-right: 4px;"></span>Active';
-                } else {
-                    smtpStatusBadge.className = 'status-badge danger';
-                    smtpStatusBadge.innerHTML = 'Inactive';
-                }
-                
-                const tbody = document.getElementById('actions-table-body');
-                if (!data.recent_actions || data.recent_actions.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                        No actions captured in this session yet.
-                    </div></td></tr>`;
-                } else {
-                    tbody.innerHTML = data.recent_actions.map(act => {
-                        const statusClass = act.status === 'SUCCESS' ? 'status-badge success' : 'status-badge danger';
-                        const typeLower = act.type.toLowerCase();
-                        const typeClass = 'type-badge ' + (typeLower === 'trigger' ? 'trigger' : (typeLower === 'system' ? 'system' : 'reset'));
-                        
-                        let attsHtml = '<span style="color: var(--text-muted);">-</span>';
-                        if (act.attachments && act.attachments.length > 0) {
-                            attsHtml = act.attachments.map(att => {
-                                const safeName = escapeHtml(att.filename);
-                                const safePath = escapeHtml(att.path);
-                                return `<div class="attachment-item" style="margin-bottom: 0.5rem;">
-                                    <a href="/attachments/${safeName}" target="_blank" class="attachment-link" style="color: var(--accent-primary); text-decoration: none; font-weight: 600; font-family: 'Share Tech Mono', monospace; display: inline-flex; align-items: center; gap: 0.35rem;">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                                        ${safeName}
-                                    </a>
-                                    <div class="attachment-path" style="font-size: 0.75rem; color: #7fa384; font-family: 'Share Tech Mono', monospace; word-break: break-all; margin-top: 0.15rem;">${safePath}</div>
-                                </div>`;
-                            }).join('');
-                        }
-
-                        const topicColor = typeLower === 'system' ? 'var(--text-muted)' : 'var(--accent-primary)';
-
-                        return `<tr>
-                            <td style="white-space: nowrap; font-family: 'Share Tech Mono', monospace;">${escapeHtml(act.timestamp)}</td>
-                            <td><span class="${typeClass}">${escapeHtml(act.type.toUpperCase())}</span></td>
-                            <td style="font-family: 'Share Tech Mono', monospace;">${escapeHtml(act.sender)}</td>
-                            <td style="font-family: 'Share Tech Mono', monospace; font-size: 0.875rem; color: ${topicColor};">${escapeHtml(act.topic)}</td>
-                            <td><span style="font-family: 'Share Tech Mono', monospace; font-weight: 600; color: var(--text-primary);">${escapeHtml(act.payload)}</span></td>
-                            <td>${attsHtml}</td>
-                            <td><span class="${statusClass}">${escapeHtml(act.status)}</span></td>
-                        </tr>`;
-                    }).join('');
-                }
-                
-            } catch (err) {
-                console.error('Failed to fetch stats', err);
-            }
-        }
-        
-        setInterval(updateStats, 3000);
-        updateStats();
-    </script>
+    <h1>smtp2mqtt</h1>
 </body>
 </html>"""
 
-    async def handle_web_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        """Asynchronously parses incoming GET requests and serves JSON status or premium HTML dashboard."""
-        try:
-            data = await reader.readline()
-            line = data.decode("utf-8", errors="ignore").strip()
-            if not line:
-                return
-            
-            parts = line.split()
-            if len(parts) < 2:
-                return
-            
-            method, path = parts[0], parts[1]
-            
-            # Consume the remaining HTTP request headers (max 100 to prevent DoS)
-            header_count = 0
-            while header_count < 100:
-                header_line = await reader.readline()
-                if not header_line or header_line == b"\r\n" or header_line == b"\n":
-                    break
-                header_count += 1
-            
-            if method != "GET":
-                response_headers = (
-                    "HTTP/1.1 405 Method Not Allowed\r\n"
-                    "Content-Type: text/plain\r\n"
-                    "Content-Length: 18\r\n"
-                    "Connection: close\r\n\r\n"
-                    "Method Not Allowed"
-                )
-                writer.write(response_headers.encode())
-                await writer.drain()
-                return
-
-            if path in ("/api", "/api/status", "/status"):
-                status_dict = self.get_status_json()
-                body = json.dumps(status_dict, indent=2).encode("utf-8")
-                content_type = "application/json"
-            elif path == "/":
-                body = self.get_dashboard_html().encode("utf-8")
-                content_type = "text/html; charset=utf-8"
-            elif path in ("/logo.svg", "/favicon.svg", "/favicon.ico"):
-                filename = "logo.svg" if path == "/logo.svg" else "favicon.svg"
-                file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
-                if os.path.exists(file_path) and os.path.isfile(file_path):
-                    content_type = "image/svg+xml"
-                    try:
-                        body = await asyncio.to_thread(self._read_file_binary, file_path)
-                    except Exception as e:
-                        log.error("Failed to read image file %s: %s", file_path, e)
-                        body = b"Internal Server Error"
-                        content_type = "text/plain"
-                        response_headers = (
-                            f"HTTP/1.1 500 Internal Server Error\r\n"
-                            f"Content-Type: {content_type}\r\n"
-                            f"Content-Length: {len(body)}\r\n"
-                            "Connection: close\r\n\r\n"
-                        )
-                        writer.write(response_headers.encode() + body)
-                        await writer.drain()
-                        return
-                else:
-                    body = b"File Not Found"
-                    content_type = "text/plain"
-                    response_headers = (
-                        f"HTTP/1.1 404 Not Found\r\n"
-                        f"Content-Type: {content_type}\r\n"
-                        f"Content-Length: {len(body)}\r\n"
-                        "Connection: close\r\n\r\n"
-                    )
-                    writer.write(response_headers.encode() + body)
-                    await writer.drain()
-                    return
-            elif path.startswith("/attachments/"):
-                # Safety check against Path Traversal (CWE-22) by extracting only the base filename
-                filename = os.path.basename(path)
-                file_path = os.path.join(get_attachments_dir(), filename)
-                
-                # Make sure the file exists and is indeed a file within the 'attachments' directory
-                if os.path.exists(file_path) and os.path.isfile(file_path):
-                    # Guess MIME type
-                    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
-                    mime_types = {
-                        "jpg": "image/jpeg",
-                        "jpeg": "image/jpeg",
-                        "png": "image/png",
-                        "gif": "image/gif",
-                        "pdf": "application/pdf"
-                    }
-                    content_type = mime_types.get(ext, "application/octet-stream")
-                    
-                    try:
-                        body = await asyncio.to_thread(self._read_file_binary, file_path)
-                        response_headers = (
-                            f"HTTP/1.1 200 OK\r\n"
-                            f"Content-Type: {content_type}\r\n"
-                            f"Content-Length: {len(body)}\r\n"
-                            f"Content-Disposition: inline; filename=\"{filename}\"\r\n"
-                            "Connection: close\r\n\r\n"
-                        )
-                        writer.write(response_headers.encode() + body)
-                        await writer.drain()
-                        return
-                    except Exception as e:
-                        log.error("Failed to read attachment file %s: %s", file_path, e)
-                        body = b"Internal Server Error"
-                        content_type = "text/plain"
-                        response_headers = (
-                            f"HTTP/1.1 500 Internal Server Error\r\n"
-                            f"Content-Type: {content_type}\r\n"
-                            f"Content-Length: {len(body)}\r\n"
-                            "Connection: close\r\n\r\n"
-                        )
-                        writer.write(response_headers.encode() + body)
-                        await writer.drain()
-                        return
-                else:
-                    body = b"Attachment Not Found"
-                    content_type = "text/plain"
-                    response_headers = (
-                        f"HTTP/1.1 404 Not Found\r\n"
-                        f"Content-Type: {content_type}\r\n"
-                        f"Content-Length: {len(body)}\r\n"
-                        "Connection: close\r\n\r\n"
-                    )
-                    writer.write(response_headers.encode() + body)
-                    await writer.drain()
-                    return
-            else:
-                body = b"Not Found"
-                content_type = "text/plain"
-                response_headers = (
-                    f"HTTP/1.1 404 Not Found\r\n"
-                    f"Content-Type: {content_type}\r\n"
-                    f"Content-Length: {len(body)}\r\n"
-                    "Connection: close\r\n\r\n"
-                )
-                writer.write(response_headers.encode() + body)
-                await writer.drain()
-                return
-
-            response_headers = (
-                f"HTTP/1.1 200 OK\r\n"
-                f"Content-Type: {content_type}\r\n"
-                f"Content-Length: {len(body)}\r\n"
-                "Connection: close\r\n\r\n"
-            )
-            writer.write(response_headers.encode() + body)
-            await writer.drain()
-        except Exception as e:
-            log.error("Error serving web request: %s", e)
-        finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
-
-    def _read_file_binary(self, file_path: str) -> bytes:
-        with open(file_path, "rb") as f:
-            return f.read()
-
-
-def register_loxberry_log(loxberry_paths: Dict[str, str]) -> None:
-    """Registers the daemon logfile in LoxBerry's SQLite Log Database so logmanager.cgi displays it."""
-    log_dir = loxberry_paths.get("LBPLOG", "")
-    if not log_dir:
+def register_loxberry_log(paths: Dict[str, str]) -> None:
+    """Registers smtp2mqtt.log in LoxBerry system log database if in LoxBerry environment."""
+    log_dir = paths.get("LBPLOG")
+    lb_home = paths.get("LBHOME")
+    if not log_dir or not lb_home:
         return
+
     log_file = os.path.join(log_dir, "smtp2mqtt.log")
-    perl_cmd = f"""
-use LoxBerry::Log;
-my $log = LoxBerry::Log->new(
-    name => 'daemon',
-    package => 'smtp2mqtt',
-    filename => '{log_file}',
-    append => 1,
-    addtime => 1
-);
-$log->LOGSTART('smtp2mqtt gateway session');
-"""
+    perl_cmd = f"use LoxBerry::Log; my $log = LoxBerry::Log->new(name => 'smtp2mqtt', filename => '{log_file}', append => 1, stderr => 1); $log->open();"
     try:
         subprocess.run(["perl", "-e", perl_cmd], capture_output=True, timeout=5)
     except Exception as e:
@@ -1892,4 +1192,3 @@ if __name__ == "__main__":
     except Exception:
         log.exception("Unhandled exception in main execution loop")
         sys.exit(1)
-

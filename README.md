@@ -86,7 +86,7 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 | `MQTT_PASSWORD` | Password for the MQTT broker (optional) | `""` |
 | `MQTT_TOPIC` | Root prefix for published MQTT topics | `smtp2mqtt` |
 | `MQTT_PAYLOAD` | Payload published when an email is received (Trigger) | `ON` |
-| `MQTT_RESET_TIME` | Delay in milliseconds before resetting the topic (`0` to disable) | `200` |
+| `MQTT_RESET_TIME` | Delay in seconds before resetting the topic (`0` to disable) | `10` |
 | `MQTT_RESET_PAYLOAD` | Payload published when the reset timer expires | `OFF` |
 | `SAVE_ATTACHMENTS` | Whether to extract and save attached image snapshots | `False` |
 | `SAVE_ATTACHMENTS_DURING_RESET_TIME` | Save images from emails arriving while reset timer is active | `False` |
@@ -96,6 +96,15 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
 | `ENABLE_WEB` | Enable the built-in zero-dependency HTTP server for stats/dashboard | `True` |
 | `WEB_PORT` | Port the built-in HTTP server listens on | `8080` |
 | `DEBUG` | Enable verbose debug logging | `False` |
+
+### 🔒 Security & Visual Firewall Manager (`ALLOWED_IPS`)
+
+`smtp2mqtt` includes an integrated IP Whitelist firewall to protect the SMTP port against unauthorized connection attempts:
+
+- **Visual Table Manager (PHP WebAdmin)**: Easily manage allowed IP addresses and CIDR subnets in a user-friendly table with custom device labels (e.g. `10.0.40.103` -> `Entrance Camera`).
+- **Quick Presets**: 1-click preset buttons to allow common private network ranges (`192.168.0.0/16`, `10.0.0.0/8`), `Localhost (127.0.0.1)`, or `Allow All (*)` for initial testing.
+- **1-Click Blocked Connection Scanner**: If an unauthorized IP attempts to connect to the SMTP port, the gateway logs the event and surfaces a warning alert in the WebAdmin with a 1-click **`[+ Allow Device]`** button.
+- **Expert Mode**: Power users can toggle expert mode at any time to edit the raw comma-separated `ALLOWED_IPS` string directly.
 
 ---
 

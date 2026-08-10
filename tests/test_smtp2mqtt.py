@@ -77,6 +77,14 @@ async def test_handle_connect_rejected():
     with mock.patch.dict(smtp2mqtt.config, {"ALLOWED_IPS": "192.168.1.0/24, 127.0.0.1"}):
         res = await handler.handle_CONNECT(mock.MagicMock(), session, mock.MagicMock())
         assert "554 5.7.1 Access denied" in res
+        assert len(handler.recent_blocked_attempts) == 1
+        assert handler.recent_blocked_attempts[0]["ip"] == "203.0.113.195"
+        assert handler.recent_blocked_attempts[0]["count"] == 1
+        
+        # Test status JSON contains recent_blocked_attempts
+        status_json = handler.get_status_json()
+        assert "recent_blocked_attempts" in status_json
+        assert status_json["recent_blocked_attempts"][0]["ip"] == "203.0.113.195"
 
 @pytest.mark.asyncio
 async def test_handle_connect_allowed():
@@ -132,6 +140,7 @@ def test_file_logger_setup_permission_error():
                 smtp2mqtt.log.removeHandler(h)
         if os.path.exists("log"):
             shutil.rmtree("log")
+        importlib.reload(smtp2mqtt)
 
 @pytest.mark.asyncio
 async def test_smtp2mqtt_handler_saves_attachments():
@@ -545,7 +554,7 @@ def test_integration_flow():
         stdout, stderr = process.communicate(timeout=5)
         
         assert f"SMTP server is listening on 0.0.0.0:{test_port}" in stdout
-        assert "Received SMTP message from camera@house.com" in stdout
+        assert ("Received SMTP MAIL FROM from camera@house.com" in stdout or "Received SMTP message from camera@house.com" in stdout)
         assert "Publishing payload 'ON' to topic 'smtp2mqtt/camera-house.com'" in stdout
         assert "Received termination signal" in stdout
         assert "smtp2mqtt gateway stopped successfully." in stdout
@@ -1975,25 +1984,24 @@ def test_mqtt_disconnect_callbacks():
 
 @pytest.mark.asyncio
 async def test_variant_b_sliding_window_reset_and_ms_scaling():
-    """Verify Issue #1 fix: Reset time is scaled from ms to seconds for asyncio call_later,
-    and receiving multiple messages during reset time extends the reset window (Variant B)
+    """Verify that multiple triggers during active reset window extend the reset timer
     without sending duplicate ON payloads to MQTT."""
     loop = mock.MagicMock()
     handler = smtp2mqtt.smtp2mqttHandler(loop)
-    handler.reset_time = 200  # 200 ms
+    handler.reset_time = 0.2  # 0.2 seconds
 
     envelope = mock.MagicMock()
     envelope.mail_from = "camera1@home.com"
     envelope.original_content = b"Subject: Motion detected\n\nMotion in zone 1"
 
     with mock.patch.object(handler, "mqtt_publish") as mock_pub:
-        # First message: Topic is NOT in reset state -> sends ON payload and schedules timer for 0.200 seconds
-        res1 = await handler.handle_DATA(None, None, envelope)
-        assert res1 == "250 Message accepted for delivery"
+        # First message: Topic is NOT in reset state -> sends ON payload on MAIL FROM and schedules timer for 0.2 seconds
+        res1 = await handler.handle_MAIL(None, None, envelope, "camera1@home.com", [])
+        assert res1 == "250 OK"
         assert mock_pub.call_count == 1
         mock_pub.assert_called_with("smtp2mqtt/camera1-home.com", "ON", "trigger", "camera1@home.com")
 
-        # Verify call_later argument is 0.2 seconds (200 ms / 1000)
+        # Verify call_later argument is 0.2 seconds
         assert loop.call_later.call_count == 1
         call_args = loop.call_later.call_args
         assert abs(call_args[0][0] - 0.2) < 1e-4
@@ -2003,8 +2011,8 @@ async def test_variant_b_sliding_window_reset_and_ms_scaling():
         handler.handles["smtp2mqtt/camera1-home.com"] = timer_handle_mock
 
         # Second message received while reset timer is ACTIVE (Variant B)
-        res2 = await handler.handle_DATA(None, None, envelope)
-        assert res2 == "250 Message accepted for delivery"
+        res2 = await handler.handle_MAIL(None, None, envelope, "camera1@home.com", [])
+        assert res2 == "250 OK"
 
         # Should NOT publish a second ON to MQTT (mock_pub count remains 1)
         assert mock_pub.call_count == 1
@@ -2027,6 +2035,56 @@ async def test_version_check_disabled_in_loxberry_environment():
         handler = smtp2mqtt.smtp2mqttHandler(loop)
         await handler.check_version_updates_loop()
         assert handler.version_check_status == "disabled_loxberry"
+
+
+@pytest.mark.asyncio
+async def test_handle_connect_rejected_multiple_attempts_and_truncation():
+    """Verify that multiple blocked connections from same IP increment count and max 10 IPs are kept."""
+    loop = mock.MagicMock()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    with mock.patch.dict(smtp2mqtt.config, {"ALLOWED_IPS": "192.168.1.0/24"}):
+        # Repeated attempt from same IP
+        session1 = mock.MagicMock()
+        session1.peer = ("203.0.113.195", 54321)
+        await handler.handle_CONNECT(mock.MagicMock(), session1, mock.MagicMock())
+        await handler.handle_CONNECT(mock.MagicMock(), session1, mock.MagicMock())
+        
+        assert len(handler.recent_blocked_attempts) == 1
+        assert handler.recent_blocked_attempts[0]["ip"] == "203.0.113.195"
+        assert handler.recent_blocked_attempts[0]["count"] == 2
+
+        # Exceed max 10 distinct IPs limit
+        for i in range(12):
+            sess = mock.MagicMock()
+            sess.peer = (f"10.99.0.{i+1}", 54321)
+            await handler.handle_CONNECT(mock.MagicMock(), sess, mock.MagicMock())
+
+        assert len(handler.recent_blocked_attempts) == 10
+        assert handler.recent_blocked_attempts[0]["ip"] == "10.99.0.12"
+
+
+def test_flushing_file_handler_emits_and_flushes(tmp_path):
+    """Verify that FlushingFileHandler immediately flushes log entries to disk."""
+    log_file = tmp_path / "test_flush.log"
+    handler = smtp2mqtt.FlushingFileHandler(str(log_file), encoding="utf-8")
+    record = logging.LogRecord("test", logging.INFO, "path", 10, "Test message", (), None)
+    
+    with mock.patch.object(handler, "flush") as mock_flush:
+        handler.emit(record)
+        assert mock_flush.call_count >= 1
+    handler.close()
+
+
+def test_get_loxberry_paths_and_log_dir():
+    """Verify get_loxberry_paths discovers directories when LBHOMEDIR is set."""
+    with mock.patch.dict(os.environ, {"LBHOMEDIR": "/tmp/fake_loxberry"}):
+        with mock.patch("os.path.exists", return_value=True):
+            paths = smtp2mqtt.get_loxberry_paths()
+            assert paths.get("LBHOME") == "/tmp/fake_loxberry"
+            assert "LBPLOG" in paths
+            assert "LBPDATA" in paths
+
 
 
 
