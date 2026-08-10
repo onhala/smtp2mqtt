@@ -1138,11 +1138,29 @@ $active_tab = $_GET['tab'] ?? 'settings';
         syncAllowedIpsFromTable();
     }
 
+    function readCurrentTableState() {
+        const ipInputs = document.querySelectorAll('input[name="rule_ip[]"]');
+        const labelInputs = document.querySelectorAll('input[name="rule_label[]"]');
+        const updated = [];
+        if (ipInputs && ipInputs.length > 0) {
+            ipInputs.forEach((inp, i) => {
+                const ipVal = inp.value.trim();
+                const lblVal = labelInputs[i] ? labelInputs[i].value.trim() : '';
+                if (ipVal || lblVal) {
+                    updated.push({ ip: ipVal, label: lblVal });
+                }
+            });
+            return updated;
+        }
+        return firewallRules;
+    }
+
     function escapeHtml(str) {
         return (str || '').replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
     }
 
     function addFirewallRule(ip, label = '') {
+        firewallRules = readCurrentTableState();
         ip = (ip || '').trim();
         if (!ip) return;
         const existing = firewallRules.find(r => r.ip === ip);
@@ -1156,6 +1174,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
     }
 
     function removeFirewallRule(idx) {
+        firewallRules = readCurrentTableState();
         if (idx >= 0 && idx < firewallRules.length) {
             firewallRules.splice(idx, 1);
             renderFirewallTable();
@@ -1206,6 +1225,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
         if (!tableMode || !expertMode) return;
 
         if (expertMode.style.display === 'none' || expertMode.style.display === '') {
+            firewallRules = readCurrentTableState();
             syncAllowedIpsFromTable();
             tableMode.style.display = 'none';
             expertMode.style.display = 'block';
@@ -1213,8 +1233,9 @@ $active_tab = $_GET['tab'] ?? 'settings';
         } else {
             const rawVal = document.getElementById('allowed_ips')?.value || '';
             const parts = rawVal.split(',').map(p => p.trim()).filter(p => p.length > 0);
+            const oldRules = readCurrentTableState();
             firewallRules = parts.map(p => {
-                const existing = firewallRules.find(r => r.ip === p);
+                const existing = oldRules.find(r => r.ip === p);
                 return { ip: p, label: existing ? existing.label : '' };
             });
             renderFirewallTable();
