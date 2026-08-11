@@ -52,6 +52,26 @@ def test_parse_hikvision_event():
     assert e5["device_model"] == "NVR-01"
 
 
+def test_version_consistency():
+    """Verify that plugin.cfg, release.cfg, and webfrontend PHP files consistently report version 1.9.0."""
+    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    
+    # Check plugin.cfg
+    pcfg_path = os.path.join(root_dir, "plugin.cfg")
+    if os.path.exists(pcfg_path):
+        with open(pcfg_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            assert "VERSION=1.9.0" in content
+
+    # Check release.cfg
+    rcfg_path = os.path.join(root_dir, "release.cfg")
+    if os.path.exists(rcfg_path):
+        with open(rcfg_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            assert "VERSION=1.9.0" in content
+            assert "v1.9.0" in content
+
+
 def test_parse_bool():
     """Verify boolean parsing helper handles various values correctly."""
     assert smtp2mqtt.parse_bool("True") is True

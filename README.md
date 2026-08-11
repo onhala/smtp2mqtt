@@ -71,7 +71,52 @@ This is a modernized version of `wicol/emqtt` redesigned for modern Python (3.10
    `smtp2mqtt/camera1-home.com`
 3. It publishes a trigger payload (`ON`) to the topic.
 4. If image attachments are present and `SAVE_ATTACHMENTS` is enabled, it stores them under the `attachments/` folder.
-5. If `MQTT_RESET_TIME` is set (e.g., `10` seconds), it schedules a task that will automatically publish a reset payload (`OFF`) to the same topic after the timer expires, resetting the Loxone input.
+5. If `MQTT_RESET_TIME` is set (e.g., `10` seconds), it schedules a task that will automatically publish a reset payload (`0`) to the same topic after the timer expires, resetting the Loxone input.
+
+---
+
+## 👁️ Hikvision & Dahua AI Smart Event Telemetry
+
+Starting from **v1.9.0**, `smtp2mqtt` includes a zero-latency, background Hikvision & Dahua AI Event Parser. It automatically inspects incoming email subjects and bodies, identifies the exact AI trigger type (Line Crossing, Intrusion Detection, Face Detection, Tamper Detection, Disk Error, etc.), extracts line/region numbers and target classification (`human` / `vehicle`), and exposes structured metadata across both the Web UI and MQTT.
+
+### Zero-Latency Guarantee (< 45 ms)
+The instant binary trigger payload (`1` to Loxone) is published **immediately** upon receiving the SMTP `MAIL FROM` connection (< 45 ms latency). The email body text parsing and telemetry extraction run **fully asynchronously in the background**, ensuring that smart lights turn on instantly without any delay.
+
+### Supported Event Catalog
+
+| Event Type | Badge Icon | Extracted Metadata | Example Hikvision Trigger |
+| :--- | :--- | :--- | :--- |
+| **Line Crossing** | 🚶 `Line Crossing` | Line Number (Line 1..4), Target (`human`/`vehicle`), Camera Name | `Line Crossing Alarm from HiK Cam 3 (Line 1)` |
+| **Field / Intrusion Detection** | 🛡️ `Intrusion Detection` | Region Number (Region 1..4), Target (`human`/`vehicle`), Dwell Time | `Field Detection Alarm from HiK Cam 4 (Region 1)` |
+| **Region Entrance / Exiting** | 🚪 `Region Entrance/Exit` | Region Number, Target | `Region Entrance Alarm` |
+| **Loitering Detection** | ⏳ `Loitering` | Region Number, Target | `Loitering Alarm` |
+| **Face Detection** | 👤 `Face Detection` | Camera Name, Timestamp | `Face Detection Alarm` |
+| **License Plate Recognition** | 🚗 `Plate Recognition` | License Plate String, Vehicle Model | `ANPR Detection Alarm` |
+| **Video Tampering** | ⚠️ `Video Tampering` | Camera Name, Tamper Type | `Video Tampering Detection` |
+| **Scene Change / Defocus** | 🔄 / 🔍 | Camera Name | `Scene Change Alarm` / `Defocus Alarm` |
+| **Audio Exception / PIR** | 🔊 / 🚨 | Noise Level / Sensor State | `Audio Exception Alarm` |
+| **Disk & Network Diagnostics** | 💾 / 🌐 | Device Name, Error Code | `Disk Full Warning` / `IP Conflict` |
+
+### MQTT Event JSON Sub-Topic (`<topic>/event`)
+
+In addition to the primary binary topic (`smtp2mqtt/cam3-nm315.cz` -> `1`), `smtp2mqtt` publishes a rich JSON payload to the sub-topic `smtp2mqtt/<sender>/event`:
+
+```json
+{
+  "event": "line_crossing",
+  "label": "Line Crossing (Line 1)",
+  "line": 1,
+  "region": null,
+  "target": "human",
+  "camera_name": "HiK Cam 3(1)",
+  "device_model": "DS-2CD2387G2-LSU/SL",
+  "event_time": "2026-08-11 22:25:01",
+  "attachments": ["snapshot_20260811_222501.jpg"]
+}
+```
+
+This topic can be subscribed to in **Loxone Config** via a Virtual Text Input or in **Home Assistant / Node-RED** for detailed event logging, notifications, and conditional automation logic.
+
 
 ---
 

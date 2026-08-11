@@ -23,7 +23,7 @@ $L_ini = LBSystem::readlanguage("language.ini");
 $L = array_merge(is_array($L_ini) ? $L_ini : [], $L_json);
 
 // Plugin version dynamically from LoxBerry config
-$plugin_version = $lbpconfig['PLUGIN']['VERSION'] ?? '1.8.27';
+$plugin_version = $lbpconfig['PLUGIN']['VERSION'] ?? '1.9.0';
 
 // Define paths safely with fallbacks for LoxBerry environment
 $lbpconfigdir = !empty($lbpconfigdir) ? $lbpconfigdir : (defined('LBPCONFIGDIR') ? LBPCONFIGDIR : "/opt/loxberry/config/plugins/smtp2mqtt");
