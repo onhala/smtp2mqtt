@@ -22,6 +22,7 @@ import email
 import ipaddress
 import json
 import logging
+import re
 import signal
 import socket
 import urllib.request
@@ -245,6 +246,153 @@ lb_mqtt_defaults = load_loxberry_mqtt_config(loxberry_paths)
 file_defaults = load_file_config(loxberry_paths)
 
 
+def parse_hikvision_event(subject: str, body: str) -> Dict[str, Any]:
+    """Parses email subject and body text from Hikvision cameras / NVRs to extract detailed event metadata."""
+    subject_clean = (subject or "").strip()
+    body_clean = (body or "").strip()
+    full_text = f"{subject_clean}\n{body_clean}"
+
+    event_info = {
+        "event_type": "motion",
+        "event_label": "Motion Detection",
+        "event_icon": "📹",
+        "line_number": None,
+        "region_number": None,
+        "target_type": "unknown",
+        "camera_name": None,
+        "device_model": None,
+        "event_time": None,
+        "raw_details": {}
+    }
+
+    kv_pairs = {}
+    for line in body_clean.splitlines():
+        if ":" in line:
+            parts = line.split(":", 1)
+            k = parts[0].strip().upper()
+            v = parts[1].strip()
+            if k and v:
+                kv_pairs[k] = v
+
+    event_info["raw_details"] = kv_pairs
+
+    for k, v in kv_pairs.items():
+        if "CAMERA NAME" in k:
+            event_info["camera_name"] = v
+        elif "DEVICE NAME" in k or "DVR NAME" in k:
+            event_info["device_model"] = v
+        elif "EVENT TIME" in k or "ALARM TIME" in k:
+            event_info["event_time"] = v
+        elif "TARGET TYPE" in k or "DETECTION TARGET" in k:
+            t_val = v.lower()
+            if "human" in t_val:
+                event_info["target_type"] = "human"
+            elif "vehicle" in t_val:
+                event_info["target_type"] = "vehicle"
+
+    line_match = re.search(r'(?:line|lineitem|čára|čára číslo)\s*(\d+)', full_text, re.IGNORECASE)
+    if line_match:
+        try:
+            event_info["line_number"] = int(line_match.group(1))
+        except ValueError:
+            pass
+
+    region_match = re.search(r'(?:region|field|zone|zóna|oblast)\s*(\d+)', full_text, re.IGNORECASE)
+    if region_match:
+        try:
+            event_info["region_number"] = int(region_match.group(1))
+        except ValueError:
+            pass
+
+    if event_info["target_type"] == "unknown":
+        if re.search(r'\b(?:human|person|člověk|postava)\b', full_text, re.IGNORECASE):
+            event_info["target_type"] = "human"
+        elif re.search(r'\b(?:vehicle|car|auto|vozidlo)\b', full_text, re.IGNORECASE):
+            event_info["target_type"] = "vehicle"
+
+    text_lower = full_text.lower()
+
+    if "line crossing" in text_lower or "linedetection" in text_lower or "překročení" in text_lower:
+        event_info["event_type"] = "line_crossing"
+        line_str = f" (Line {event_info['line_number']})" if event_info['line_number'] else ""
+        event_info["event_label"] = f"Line Crossing{line_str}"
+        event_info["event_icon"] = "🚶"
+    elif "field detection" in text_lower or "fielddetection" in text_lower or "intrusion" in text_lower or "narušení" in text_lower:
+        event_info["event_type"] = "intrusion"
+        reg_str = f" (Region {event_info['region_number']})" if event_info['region_number'] else ""
+        event_info["event_label"] = f"Intrusion Detection{reg_str}"
+        event_info["event_icon"] = "🛡️"
+    elif "region entrance" in text_lower or "regionentrance" in text_lower or "vstup do oblasti" in text_lower:
+        event_info["event_type"] = "region_entrance"
+        event_info["event_label"] = "Region Entrance"
+        event_info["event_icon"] = "🚪"
+    elif "region exiting" in text_lower or "regionexiting" in text_lower or "opuštění oblasti" in text_lower:
+        event_info["event_type"] = "region_exiting"
+        event_info["event_label"] = "Region Exiting"
+        event_info["event_icon"] = "🚪"
+    elif "loitering" in text_lower or "postávání" in text_lower:
+        event_info["event_type"] = "loitering"
+        event_info["event_label"] = "Loitering Detection"
+        event_info["event_icon"] = "⏳"
+    elif "unattended baggage" in text_lower or "object left" in text_lower or "zavazadlo" in text_lower:
+        event_info["event_type"] = "unattended_baggage"
+        event_info["event_label"] = "Unattended Baggage"
+        event_info["event_icon"] = "🧳"
+    elif "object removal" in text_lower or "odebrání předmětu" in text_lower:
+        event_info["event_type"] = "object_removal"
+        event_info["event_label"] = "Object Removal"
+        event_info["event_icon"] = "📦"
+    elif "face detection" in text_lower or "facedetection" in text_lower or "obličej" in text_lower:
+        event_info["event_type"] = "face_detection"
+        event_info["event_label"] = "Face Detection"
+        event_info["event_icon"] = "👤"
+    elif "anpr" in text_lower or "license plate" in text_lower or "spz" in text_lower:
+        event_info["event_type"] = "anpr"
+        event_info["event_label"] = "Plate Recognition"
+        event_info["event_icon"] = "🚗"
+    elif "tamper" in text_lower or "sabotáž" in text_lower or "zakrytí" in text_lower:
+        event_info["event_type"] = "tamper"
+        event_info["event_label"] = "Video Tampering"
+        event_info["event_icon"] = "⚠️"
+    elif "scene change" in text_lower or "změna scény" in text_lower:
+        event_info["event_type"] = "scene_change"
+        event_info["event_label"] = "Scene Change"
+        event_info["event_icon"] = "🔄"
+    elif "defocus" in text_lower or "rozostření" in text_lower:
+        event_info["event_type"] = "defocus"
+        event_info["event_label"] = "Defocus Detection"
+        event_info["event_icon"] = "🔍"
+    elif "audio exception" in text_lower or "zvuková výjimka" in text_lower:
+        event_info["event_type"] = "audio_exception"
+        event_info["event_label"] = "Audio Exception"
+        event_info["event_icon"] = "🔊"
+    elif "pir" in text_lower:
+        event_info["event_type"] = "pir"
+        event_info["event_label"] = "PIR Alarm"
+        event_info["event_icon"] = "🚨"
+    elif "alarm input" in text_lower or "io alarm" in text_lower:
+        event_info["event_type"] = "io_alarm"
+        event_info["event_label"] = "IO Alarm Input"
+        event_info["event_icon"] = "⚡"
+    elif "disk full" in text_lower or "disk error" in text_lower or "diskfull" in text_lower or "diskerror" in text_lower:
+        event_info["event_type"] = "disk_error"
+        event_info["event_label"] = "Disk Exception / Error"
+        event_info["event_icon"] = "💾"
+    elif "ip conflict" in text_lower or "ipconflict" in text_lower or "nicbroken" in text_lower:
+        event_info["event_type"] = "network_error"
+        event_info["event_label"] = "Network / IP Error"
+        event_info["event_icon"] = "🌐"
+    elif "illegal access" in text_lower or "illaccess" in text_lower:
+        event_info["event_type"] = "illegal_access"
+        event_info["event_label"] = "Illegal Access Attempt"
+        event_info["event_icon"] = "🔒"
+    else:
+        event_info["event_type"] = "motion"
+        event_info["event_label"] = "Motion Detection"
+        event_info["event_icon"] = "📹"
+
+    return event_info
+
 
 def get_data_dir() -> str:
     """Returns the base data directory (LBPDATA if in LoxBerry mode, otherwise current dir)."""
@@ -455,6 +603,11 @@ class smtp2mqttHandler:
             "topic": topic,
             "payload": payload,
             "status": status,
+            "attachments": [],
+            "event_type": "motion",
+            "event_label": "Motion Detection",
+            "event_icon": "📹",
+            "event_details": {}
         }
         self.recent_actions.insert(0, action)
         if len(self.recent_actions) > 20:
@@ -631,40 +784,80 @@ class smtp2mqttHandler:
                     reset_time_seconds, self._trigger_reset, topic
                 )
 
-        # Determine whether to save attachments - always save if enabled
-        should_save = config["SAVE_ATTACHMENTS"]
-        if should_save:
-            log.debug("Dispatching background attachment save task...")
-            is_triggered = topic in self.handles
-            task = self.loop.create_task(
-                self._process_attachments_background(envelope.original_content, topic, mail_from, is_triggered)
-            )
-            self.background_tasks.add(task)
-        else:
-            log.debug("Skipping attachment storage (disabled in config)")
+        log.debug("Dispatching background email parsing and telemetry task...")
+        is_triggered = topic in self.handles
+        task = self.loop.create_task(
+            self._process_email_background(envelope.original_content, topic, mail_from, is_triggered)
+        )
+        self.background_tasks.add(task)
 
         return "250 Message accepted for delivery"
 
-    async def _process_attachments_background(self, original_content: bytes, topic: str, mail_from: str, is_triggered: bool) -> None:
-        """Parses the email content and saves attachments in the background."""
+    async def _process_email_background(self, original_content: bytes, topic: str, mail_from: str, is_triggered: bool) -> None:
+        """Parses the email content, extracts Hikvision event telemetry, saves attachments, and publishes event JSON in background."""
         try:
-            # Parse the email message bytes in an executor to avoid blocking the main event loop
             msg = await asyncio.to_thread(email.message_from_bytes, original_content, policy=default)
-            
-            # Save attachments in the thread executor
-            saved_attachments = await asyncio.to_thread(self.save_attachments, msg, topic, is_triggered)
-            
-            # Associate attachments with the recent trigger action
-            if saved_attachments and self.recent_actions:
+            if msg is None or not hasattr(msg, "get"):
+                try:
+                    msg = email.message_from_bytes(original_content, policy=default)
+                except Exception:
+                    msg = None
+
+            subject = str(msg.get("Subject", "")) if msg and hasattr(msg, "get") else ""
+            body_text = ""
+            try:
+                if msg and hasattr(msg, "is_multipart") and msg.is_multipart():
+                    for part in msg.walk():
+                        if part.get_content_type() in ("text/plain", "text/html"):
+                            body_text += str(part.get_content() or "") + "\n"
+                elif msg and hasattr(msg, "get_content"):
+                    body_text = str(msg.get_content() or "")
+                elif isinstance(original_content, bytes):
+                    body_text = original_content.decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+
+            event_info = parse_hikvision_event(subject, body_text)
+
+            saved_attachments = []
+            if config.get("SAVE_ATTACHMENTS", True):
+                saved_attachments = await asyncio.to_thread(self.save_attachments, msg, topic, is_triggered)
+
+            # Associate event metadata & attachments with recent action
+            if self.recent_actions:
                 for action in self.recent_actions:
                     if (
-                        action["type"] == "trigger"
+                        action["type"] in ("trigger", "trigger (extended)")
                         and action["sender"] == mail_from
                         and action["topic"] == topic
                     ):
-                        action["attachments"] = saved_attachments
-                        log.debug("Associated %d saved attachments with trigger action", len(saved_attachments))
+                        if saved_attachments:
+                            action["attachments"] = saved_attachments
+                        action["event_type"] = event_info["event_type"]
+                        action["event_label"] = event_info["event_label"]
+                        action["event_icon"] = event_info["event_icon"]
+                        action["event_details"] = event_info
+                        log.debug("Associated event %s %s with action", event_info["event_icon"], event_info["event_label"])
                         break
+
+            self.save_status_file()
+
+            # Publish detailed MQTT JSON Event Sub-topic: <topic>/event
+            event_topic = f"{topic}/event"
+            event_payload = json.dumps({
+                "event": event_info["event_type"],
+                "label": event_info["event_label"],
+                "line": event_info["line_number"],
+                "region": event_info["region_number"],
+                "target": event_info["target_type"],
+                "camera_name": event_info["camera_name"],
+                "device_model": event_info["device_model"],
+                "event_time": event_info["event_time"],
+                "attachments": [a["filename"] for a in saved_attachments] if saved_attachments else []
+            }, ensure_ascii=False)
+
+            await asyncio.to_thread(self.mqtt_publish, event_topic, event_payload, "event_metadata", mail_from)
+
         except Exception:
             log.exception("Error processing email message or attachments in the background")
         finally:

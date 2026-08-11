@@ -1347,16 +1347,20 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     if (data.status.recent_actions.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #94a3b8;">Zatím nebyly zaznamenány žádné události.</td></tr>';
                     } else {
-                        tbody.innerHTML = data.status.recent_actions.map(act => `
+                        tbody.innerHTML = data.status.recent_actions.map(act => {
+                            const icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : 'ℹ️'));
+                            const label = act.event_label || act.type || '';
+                            const targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${act.event_details.target_type}</span>` : '';
+                            return `
                             <tr style="border-bottom: 1px solid #f1f5f9;">
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.82rem;">${act.timestamp || ''}</td>
-                                <td style="padding: 8px 12px;"><span class="lox-badge-info">${act.type || ''}</span></td>
+                                <td style="padding: 8px 12px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${label}</strong>${targetStr}</span></td>
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;">${act.sender || ''}</td>
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem; color: #0369a1;">${act.topic || ''}</td>
                                 <td style="padding: 8px 12px; font-weight: 600;">${act.payload || ''}</td>
                                 <td style="padding: 8px 12px;"><span class="${act.status === 'SUCCESS' ? 'lox-badge-success' : 'lox-badge-danger'}">${act.status || ''}</span></td>
                             </tr>
-                        `).join('');
+                        `}).join('');
                     }
                 }
             })

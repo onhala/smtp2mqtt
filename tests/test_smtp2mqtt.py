@@ -22,6 +22,36 @@ def prevent_real_socket_connections(monkeypatch):
     """Prevent any background monitoring threads from making real network connections by default."""
     monkeypatch.setattr(smtp2mqtt.smtp2mqttHandler, "_check_socket_connection", lambda self, host, port: False)
 
+def test_parse_hikvision_event():
+    """Verify Hikvision event email parsing logic across various Smart VCA, Motion, Face, and Exception types."""
+    # Line Crossing
+    e1 = smtp2mqtt.parse_hikvision_event("Line Crossing Alarm from HiK Cam 3", "EVENT TYPE: Line Crossing Detection\nEVENT INPUT: Line 1\nCAMERA NAME(NUM): HiK Cam 3(1)\nTARGET TYPE: Human")
+    assert e1["event_type"] == "line_crossing"
+    assert "Line Crossing" in e1["event_label"]
+    assert e1["line_number"] == 1
+    assert e1["target_type"] == "human"
+    assert e1["camera_name"] == "HiK Cam 3(1)"
+
+    # Field Detection / Intrusion
+    e2 = smtp2mqtt.parse_hikvision_event("Field Detection Alarm", "EVENT TYPE: Field Detection\nEVENT INPUT: Region 2\nTARGET TYPE: Vehicle")
+    assert e2["event_type"] == "intrusion"
+    assert e2["region_number"] == 2
+    assert e2["target_type"] == "vehicle"
+
+    # Face Detection
+    e3 = smtp2mqtt.parse_hikvision_event("Face Detection Alarm", "EVENT TYPE: Face Detection\nCAMERA NAME: Entrance Cam")
+    assert e3["event_type"] == "face_detection"
+
+    # Tamper Detection
+    e4 = smtp2mqtt.parse_hikvision_event("Tamper Alarm", "EVENT TYPE: Video Tampering Detection")
+    assert e4["event_type"] == "tamper"
+
+    # Disk Exception
+    e5 = smtp2mqtt.parse_hikvision_event("Disk Full Warning", "EVENT TYPE: Disk Full\nDEVICE NAME: NVR-01")
+    assert e5["event_type"] == "disk_error"
+    assert e5["device_model"] == "NVR-01"
+
+
 def test_parse_bool():
     """Verify boolean parsing helper handles various values correctly."""
     assert smtp2mqtt.parse_bool("True") is True

@@ -1357,16 +1357,16 @@ $active_tab = $_GET['tab'] ?? 'settings';
                                     ? '<span class="lox-badge-success">OK / Triggery</span>' 
                                     : (act.status === 'BLOCKED' ? '<span class="lox-badge-danger">🔒 BLOCKED (Odmítnuto)</span>' : '<span class="lox-badge-danger">CHYBA</span>');
                                 
-                                let attHtml = '';
-                                if (act.attachments && act.attachments.length > 0) {
-                                    attHtml = `<div style="margin-top: 4px;"><span class="lox-badge-info">📸 ${act.attachments.length} snímky</span></div>`;
-                                }
+                                let icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : 'ℹ️'));
+                                let label = act.event_label || act.type || '';
+                                let targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${escapeHtml(act.event_details.target_type)}</span>` : '';
+                                let eventBadge = `<div style="margin-bottom: 4px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${escapeHtml(label)}</strong>${targetStr}</span></div>`;
 
                                 tr.innerHTML = `
                                     <td style="padding: 10px 12px; font-size: 0.85rem; color: #64748b;">${escapeHtml(act.timestamp)}</td>
                                     <td style="padding: 10px 12px; font-weight: 600; color: #1e293b;">${escapeHtml(act.sender)}</td>
                                     <td style="padding: 10px 12px; font-family: monospace; font-size: 0.85rem; color: #0284c7;">${escapeHtml(act.topic)}</td>
-                                    <td style="padding: 10px 12px; font-weight: 700;"><code>${escapeHtml(act.payload)}</code></td>
+                                    <td style="padding: 10px 12px;">${eventBadge}<code>${escapeHtml(act.payload)}</code></td>
                                     <td style="padding: 10px 12px;">${badge}${attHtml}</td>
                                 `;
                                 tbody.appendChild(tr);
