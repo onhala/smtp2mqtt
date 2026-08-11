@@ -61,15 +61,15 @@ def test_version_consistency():
     if os.path.exists(pcfg_path):
         with open(pcfg_path, "r", encoding="utf-8") as f:
             content = f.read()
-            assert "VERSION=1.9.0" in content
+            assert "VERSION=2.0.0" in content
 
     # Check release.cfg
     rcfg_path = os.path.join(root_dir, "release.cfg")
     if os.path.exists(rcfg_path):
         with open(rcfg_path, "r", encoding="utf-8") as f:
             content = f.read()
-            assert "VERSION=1.9.0" in content
-            assert "v1.9.0" in content
+            assert "VERSION=2.0.0" in content
+            assert "v2.0.0" in content
 
 
 def test_parse_bool():
@@ -532,7 +532,7 @@ def test_main_function_graceful_run_and_exit():
     mock_server = mock.MagicMock()
     
     # We mock asyncio.new_event_loop to return our mock loop and mock start_server
-    target_mod = getattr(smtp2mqtt, "_legacy_mod", smtp2mqtt)
+    target_mod = sys.modules.get("_smtp2mqtt_root", smtp2mqtt)
     with mock.patch("asyncio.new_event_loop", return_value=mock_loop), \
          mock.patch("asyncio.start_server", return_value=mock_server), \
          mock.patch.object(target_mod, "UnthreadedController") as mock_controller_cls:
@@ -540,7 +540,10 @@ def test_main_function_graceful_run_and_exit():
         mock_controller = mock_controller_cls.return_value
         
         # Let's call main()
-        smtp2mqtt.main()
+        if hasattr(target_mod, "main"):
+            target_mod.main()
+        else:
+            smtp2mqtt.main()
         
         # Verify controller was instantiated and started
         mock_controller_cls.assert_called_once()
