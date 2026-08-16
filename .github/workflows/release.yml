@@ -53,13 +53,13 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Commit updated release.cfg to main
+      - name: Commit updated release.cfg to master
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin main:main || true
-          git checkout main || true
+          git fetch origin master:master || true
+          git checkout master || true
           git add release.cfg plugin.cfg
           git commit -m "chore: update release.cfg and plugin.cfg to ${{ steps.vars.outputs.tag_name }} [skip ci]" || true
-          git push origin main || true
+          git push origin master || true
 
