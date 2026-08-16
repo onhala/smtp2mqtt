@@ -2164,6 +2164,26 @@ class smtp2mqttHandler:
                 s_val = 1 if s_info.get("status") == "connected" else 0
                 lines.append(f'smtp2mqtt_isapi_stream_connected{{camera="{safe_sender}",ip="{safe_ip}"}} {s_val}')
 
+        # Camera Motion / Trigger Active State (1 = motion active / holding timer, 0 = idle)
+        lines.append("# HELP smtp2mqtt_camera_motion_state Real-time motion detection state per camera (1 = active/holding, 0 = idle)")
+        lines.append("# TYPE smtp2mqtt_camera_motion_state gauge")
+        all_cams = set()
+        if isapi_streams:
+            all_cams.update(isapi_streams.keys())
+        if hasattr(self, "metrics_events_count"):
+            for c, _, _ in self.metrics_events_count.keys():
+                all_cams.add(c)
+        if hasattr(self, "allowed_senders") and self.allowed_senders:
+            all_cams.update(self.allowed_senders)
+        if not all_cams:
+            all_cams.add("default")
+        for cam in sorted(all_cams):
+            sanitized_sender = str(cam).replace("@", "-").replace("/", "_").replace("+", "_").replace("#", "_")
+            topic = f"{config.get('MQTT_TOPIC', 'smtp2mqtt')}/{sanitized_sender}"
+            is_active = 1 if topic in self.handles else 0
+            safe_cam = str(cam).replace('"', '\\"')
+            lines.append(f'smtp2mqtt_camera_motion_state{{camera="{safe_cam}"}} {is_active}')
+
         # Camera to MQTT Latencies
         lines.append("# HELP smtp2mqtt_camera_to_mqtt_latency_seconds Estimated event age / clock skew from camera detection timestamp in seconds")
         lines.append("# TYPE smtp2mqtt_camera_to_mqtt_latency_seconds gauge")
