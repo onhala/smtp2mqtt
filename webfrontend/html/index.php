@@ -1077,7 +1077,34 @@ $active_tab = $_GET['tab'] ?? 'settings';
                                         </tr>
                                     </thead>
                                     <tbody id="isapi-cameras-tbody">
-                                        <!-- Dynamic rows -->
+                                        <?php if (empty($isapi_cameras_list)): ?>
+                                            <tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 15px; font-style: italic;">Žádné kamery pro přímý ISAPI stream. Klikněte na "+ Přidat kameru" nebo předvolbu výše.</td></tr>
+                                        <?php else: ?>
+                                            <?php foreach ($isapi_cameras_list as $idx => $cam): 
+                                                $senderVal = $cam['sender'] ?? ('cam_' . ($cam['ip'] ?? ''));
+                                                $ipVal = $cam['ip'] ?? '';
+                                                $portVal = intval($cam['port'] ?? 80);
+                                            ?>
+                                                <tr style="border-bottom: 1px solid #e2e8f0;">
+                                                    <td style="padding: 8px 12px; font-family: monospace; font-weight: 600; color: #0284c7;">
+                                                        <input type="text" name="isapi_cam_sender[]" value="<?php echo htmlspecialchars($senderVal); ?>" required oninput="syncIsapiCamerasFromTable()" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 0.88rem;">
+                                                    </td>
+                                                    <td style="padding: 8px 12px; font-family: monospace; font-weight: 600; color: #1e293b;">
+                                                        <input type="text" name="isapi_cam_ip[]" value="<?php echo htmlspecialchars($ipVal); ?>" required oninput="syncIsapiCamerasFromTable()" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 0.88rem;">
+                                                    </td>
+                                                    <td style="padding: 8px 12px;">
+                                                        <input type="number" name="isapi_cam_port[]" value="<?php echo htmlspecialchars($portVal); ?>" min="1" max="65535" oninput="syncIsapiCamerasFromTable()" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-size: 0.88rem;">
+                                                    </td>
+                                                    <td style="padding: 8px 12px;" id="isapi-status-<?php echo $idx; ?>">
+                                                        <span style="color: #64748b; font-size: 0.85rem;">⚪ Neověřeno</span>
+                                                    </td>
+                                                    <td style="padding: 8px 12px; text-align: center; white-space: nowrap;">
+                                                        <button type="button" onclick="testIsapiCameraDirect(<?php echo $idx; ?>)" style="background: #0284c7; color: white; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 0.82rem; margin-right: 4px;" title="Testovat ISAPI spojení">🧪 Test</button>
+                                                        <button type="button" onclick="removeIsapiCamera(<?php echo $idx; ?>)" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 5px 8px; cursor: pointer; font-size: 0.82rem;" title="Smazat kameru">🗑️</button>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
                                     </tbody>
                                 </table>
 
@@ -1470,6 +1497,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
         if (expertMode.style.display === 'none' || expertMode.style.display === '') {
             firewallRules = readCurrentTableState();
             syncAllowedIpsFromTable();
+            tableMode.querySelectorAll('input, select').forEach(el => el.disabled = true);
             tableMode.style.display = 'none';
             expertMode.style.display = 'block';
             if (toggleBtn) toggleBtn.textContent = '📋 Přepnout na Vizuální Tabulkový Manažer';
@@ -1481,6 +1509,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 const existing = oldRules.find(r => r.ip === p);
                 return { ip: p, label: existing ? existing.label : '' };
             });
+            tableMode.querySelectorAll('input, select').forEach(el => el.disabled = false);
             renderFirewallTable();
             expertMode.style.display = 'none';
             tableMode.style.display = 'block';
@@ -1489,7 +1518,18 @@ $active_tab = $_GET['tab'] ?? 'settings';
     }
 
     // ISAPI Cameras Table Management
-    let isapiCameras = <?php echo json_encode($isapi_cameras_list ?? []); ?>;
+    let isapiCameras = <?php echo json_encode(array_values($isapi_cameras_list ?? [])); ?>;
+    if (typeof isapiCameras === 'string') {
+        try {
+            isapiCameras = JSON.parse(isapiCameras);
+            if (typeof isapiCameras === 'string') isapiCameras = JSON.parse(isapiCameras);
+        } catch(e) {
+            isapiCameras = [];
+        }
+    }
+    if (!Array.isArray(isapiCameras)) {
+        isapiCameras = [];
+    }
 
     function renderIsapiTable() {
         const tbody = document.getElementById('isapi-cameras-tbody');
@@ -1651,21 +1691,24 @@ $active_tab = $_GET['tab'] ?? 'settings';
         if (expertMode.style.display === 'none' || expertMode.style.display === '') {
             isapiCameras = readCurrentIsapiTableState();
             syncIsapiCamerasFromTable();
+            tableMode.querySelectorAll('input, select').forEach(el => el.disabled = true);
             tableMode.style.display = 'none';
             expertMode.style.display = 'block';
             if (toggleBtn) toggleBtn.textContent = '📋 Přepnout na Vizuální Tabulkový Manažer';
         } else {
             const rawVal = document.getElementById('isapi_cameras')?.value || '';
             try {
-                const parsed = JSON.parse(rawVal);
+                let parsed = JSON.parse(rawVal);
+                if (typeof parsed === 'string') parsed = JSON.parse(parsed);
                 if (Array.isArray(parsed)) isapiCameras = parsed;
             } catch(e) {
                 const parts = rawVal.split(',').map(p => p.trim()).filter(p => p.length > 0);
                 isapiCameras = parts.map(p => {
                     const sub = p.split(':');
-                    return { ip: sub[0], port: 80, sender: sub[1] || ('cam_' + sub[0]) };
+                    return { ip: sub[0], port: sub[1] ? parseInt(sub[1]) : 80, sender: sub[2] || ('cam_' + sub[0]) };
                 });
             }
+            tableMode.querySelectorAll('input, select').forEach(el => el.disabled = false);
             renderIsapiTable();
             expertMode.style.display = 'none';
             tableMode.style.display = 'block';
