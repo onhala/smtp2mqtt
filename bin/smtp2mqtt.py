@@ -707,7 +707,7 @@ if log_dir:
 
 
 # Application version
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 
 
 class smtp2mqttHandler:

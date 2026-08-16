@@ -8,13 +8,13 @@
   "smtp_connected": false,
   "smtp_status_text": "Inactive",
   "last_publish_success": false,
-  "last_publish_time": "2026-08-16 22:11:52",
+  "last_publish_time": "2026-08-16 22:15:18",
   "processed_messages_count": 0,
   "uptime_seconds": 0,
   "uptime_formatted": "0s",
   "recent_actions": [
     {
-      "timestamp": "2026-08-16 22:11:52",
+      "timestamp": "2026-08-16 22:15:18",
       "type": "system",
       "sender": "system",
       "topic": "MQTT Broker (localhost:1883)",
@@ -28,7 +28,7 @@
     }
   ],
   "recent_blocked_attempts": [],
-  "version": "2.1.1",
+  "version": "2.1.2",
   "latest_version": null,
   "update_available": false,
   "version_check_status": "pending",
