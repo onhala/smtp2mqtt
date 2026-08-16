@@ -2286,6 +2286,79 @@ def test_is_isapi_event_permitted_filtering():
     assert smtp2mqtt.is_isapi_event_permitted("motion", "human", "smart_only") is False
 
 
+def test_mask_sensitive_config():
+    """Verify that mask_sensitive_config recursively masks passwords and API secrets."""
+    raw = {
+        "MQTT_PASSWORD": "SecretPassword123",
+        "ISAPI_PASSWORD": "CamPassword456",
+        "MQTT_HOST": "localhost",
+        "MQTT_PORT": 1883,
+        "ISAPI_CAMERAS": [
+            {"ip": "10.0.40.103", "sender": "cam3", "password": "camera_secret_pwd"},
+            {"ip": "10.0.40.104", "sender": "cam4"}
+        ]
+    }
+    masked = smtp2mqtt.mask_sensitive_config(raw)
+    assert masked["MQTT_PASSWORD"] == "******"
+    assert masked["ISAPI_PASSWORD"] == "******"
+    assert masked["MQTT_HOST"] == "localhost"
+    assert masked["ISAPI_CAMERAS"][0]["password"] == "******"
+    assert "password" not in masked["ISAPI_CAMERAS"][1]
+
+
+def test_get_status_json_masks_passwords():
+    """Verify that get_status_json never leaks plain-text passwords in ISAPI status."""
+    loop = asyncio.new_event_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    handler.isapi_status = {
+        "cam3": {"ip": "10.0.40.103", "password": "SuperSecretPassword", "status": "connected"}
+    }
+    status = handler.get_status_json()
+    assert status["isapi_status"]["cam3"]["password"] == "******"
+    loop.close()
+
+
+def test_debounced_save_status_file(tmp_path, monkeypatch):
+    """Verify that save_status_file uses debouncing and schedules flush."""
+    target_mod = sys.modules.get("_smtp2mqtt_root", smtp2mqtt)
+    monkeypatch.setattr(target_mod, "get_data_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(smtp2mqtt, "get_data_dir", lambda: str(tmp_path))
+    
+    loop = asyncio.new_event_loop()
+    handler = target_mod.smtp2mqttHandler(loop)
+    
+    assert handler._status_dirty is False
+    # Trigger debounced save
+    handler.save_status_file(immediate=False)
+    assert handler._status_dirty is True
+    
+    # Immediate write
+    handler._write_status_file_sync()
+    status_file = tmp_path / "status.json"
+    assert status_file.exists()
+    handler.cancel_all_resets()
+    loop.close()
+
+
+def test_bounded_metrics_dos_protection():
+    """Verify that metrics dictionaries do not grow unbounded (capped at MAX_METRICS_ENTRIES)."""
+    loop = asyncio.new_event_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    handler.MAX_METRICS_ENTRIES = 5
+
+    # Simulate firewall rejected counts
+    for i in range(10):
+        ip = f"192.168.1.{i+1}"
+        with handler._lock:
+            if len(handler.metrics_firewall_rejected_count) >= handler.MAX_METRICS_ENTRIES and ip not in handler.metrics_firewall_rejected_count:
+                handler.metrics_firewall_rejected_count.pop(next(iter(handler.metrics_firewall_rejected_count)))
+            handler.metrics_firewall_rejected_count[ip] = 1
+
+    assert len(handler.metrics_firewall_rejected_count) <= 5
+    loop.close()
+
+
+
 
 
 

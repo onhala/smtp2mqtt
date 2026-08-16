@@ -26,6 +26,7 @@ import logging
 import re
 import signal
 import socket
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -628,6 +629,39 @@ def probe_camera_isapi(ip: str, port: int = 80, user: str = "admin", pwd: str = 
         return {"success": False, "error": err_msg}
 
 
+def mask_sensitive_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Returns a sanitized copy of configuration dictionary with passwords and sensitive credentials masked."""
+    if not isinstance(cfg, dict):
+        return cfg
+    masked = {}
+    sensitive_keys = {
+        "mqtt_password", "isapi_password", "password", "pwd", "secret", "token", "brokerpass", "mqttpass"
+    }
+    for k, v in cfg.items():
+        k_lower = str(k).lower()
+        if k_lower in sensitive_keys or any(s in k_lower for s in ("password", "secret", "token")):
+            masked[k] = "******" if v else ""
+        elif k == "ISAPI_CAMERAS":
+            if isinstance(v, list):
+                cam_list = []
+                for cam in v:
+                    if isinstance(cam, dict):
+                        cam_copy = dict(cam)
+                        if cam_copy.get("password"):
+                            cam_copy["password"] = "******"
+                        cam_list.append(cam_copy)
+                    else:
+                        cam_list.append(cam)
+                masked[k] = cam_list
+            else:
+                masked[k] = v
+        elif isinstance(v, dict):
+            masked[k] = mask_sensitive_config(v)
+        else:
+            masked[k] = v
+    return masked
+
+
 def get_data_dir() -> str:
     """Returns the base data directory (LBPDATA if in LoxBerry mode, otherwise current dir)."""
     return loxberry_paths.get("LBPDATA", ".")
@@ -739,7 +773,7 @@ if log_dir:
 
 
 # Application version
-VERSION = "2.1.2"
+VERSION = "2.2.0"
 
 
 class smtp2mqttHandler:
@@ -748,6 +782,7 @@ class smtp2mqttHandler:
         self.reset_time: float = float(config["MQTT_RESET_TIME"])
         self.handles: Dict[str, asyncio.TimerHandle] = {}
         self.background_tasks = set()
+        self._lock = threading.Lock()
         
         # State tracking for Web Status Dashboard and gethomepage.dev
         self.start_time = datetime.now()
@@ -760,12 +795,17 @@ class smtp2mqttHandler:
         self.update_available: bool = False
         self.version_check_status: str = "pending"
 
+        # Debounced disk write timer handle for status.json
+        self._status_dirty = False
+        self._status_write_handle: Optional[asyncio.TimerHandle] = None
+
         # ISAPI Stream status and tasks
         self.isapi_running = False
         self.isapi_stream_tasks: List[asyncio.Task] = []
         self.isapi_status: Dict[str, Dict[str, Any]] = {}
 
-        # Prometheus metrics datastructures
+        # Prometheus metrics datastructures (bounded with MAX_METRICS_ENTRIES)
+        self.MAX_METRICS_ENTRIES = 500
         self.metrics_events_count: Dict[Tuple[str, str, str], int] = {}
         self.metrics_messages_received_count: Dict[str, int] = {}
         self.metrics_mqtt_published_count: Dict[Tuple[str, str, str], int] = {}
@@ -898,17 +938,53 @@ class smtp2mqttHandler:
             "event_icon": event_icon,
             "event_details": event_info or {}
         }
-        self.recent_actions.insert(0, action)
-        if len(self.recent_actions) > 20:
-            self.recent_actions.pop()
+        with self._lock:
+            self.recent_actions.insert(0, action)
+            if len(self.recent_actions) > 20:
+                self.recent_actions.pop()
         self.save_status_file()
 
-    def save_status_file(self) -> None:
-        """Saves current status JSON to status.json on disk for PHP WebAdmin (non-blocking)."""
-        if hasattr(self, "loop") and self.loop and self.loop.is_running():
-            self.loop.create_task(asyncio.to_thread(self._write_status_file_sync))
-        else:
+    def save_status_file(self, immediate: bool = False) -> None:
+        """Schedules debounced writing of status.json to disk (max 1 write per 2.5s to preserve SD card)."""
+        self._status_dirty = True
+        
+        if immediate:
             self._write_status_file_sync()
+            return
+
+        if not hasattr(self, "loop") or not self.loop or not self.loop.is_running():
+            self._write_status_file_sync()
+            return
+
+        # Schedule or debounce write in the event loop
+        def _schedule_debounce():
+            if self._status_write_handle is None:
+                self._status_write_handle = self.loop.call_later(2.5, self._debounced_flush_status)
+
+        try:
+            # Check if running in current event loop thread
+            current_loop = None
+            try:
+                current_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+
+            if current_loop is self.loop:
+                _schedule_debounce()
+            else:
+                self.loop.call_soon_threadsafe(_schedule_debounce)
+        except Exception:
+            _schedule_debounce()
+
+    def _debounced_flush_status(self) -> None:
+        """Flushes status.json to disk if dirty."""
+        self._status_write_handle = None
+        if self._status_dirty:
+            self._status_dirty = False
+            if hasattr(self, "loop") and self.loop and self.loop.is_running():
+                self.loop.create_task(asyncio.to_thread(self._write_status_file_sync))
+            else:
+                self._write_status_file_sync()
 
     def _write_status_file_sync(self) -> None:
         data_dir = get_data_dir()
@@ -927,18 +1003,26 @@ class smtp2mqttHandler:
     def _on_mqtt_connect(self, client: Any, userdata: Any, flags: Dict[str, Any], rc: int, properties: Any = None) -> None:
         if rc == 0:
             log.info("Persistent MQTT client connected successfully to %s:%s", config["MQTT_HOST"], config["MQTT_PORT"])
-            self.mqtt_connected_status = True
-            # Schedule startup zero-sync across all known camera topics
+            with self._lock:
+                self.mqtt_connected_status = True
+            # Schedule startup zero-sync across all known camera topics safely from MQTT background thread
             if hasattr(self, "loop") and self.loop and self.loop.is_running():
-                self.loop.create_task(self.sync_startup_resets())
+                try:
+                    self.loop.call_soon_threadsafe(
+                        lambda: self.loop.create_task(self.sync_startup_resets())
+                    )
+                except Exception as e:
+                    log.warning("Could not schedule sync_startup_resets in loop: %s", e)
         else:
             log.error("Persistent MQTT client failed to connect: return code %s", rc)
-            self.mqtt_connected_status = False
+            with self._lock:
+                self.mqtt_connected_status = False
         self.save_status_file()
 
     def _on_mqtt_disconnect(self, client: Any, userdata: Any, disconnect_flags: Any, rc: int, properties: Any = None) -> None:
         log.warning("Persistent MQTT client disconnected: return code %s", rc)
-        self.mqtt_connected_status = False
+        with self._lock:
+            self.mqtt_connected_status = False
         self.save_status_file()
 
     def is_ip_allowed(self, peer_ip: Optional[str]) -> bool:
@@ -1004,7 +1088,10 @@ class smtp2mqttHandler:
                         self.recent_blocked_attempts.pop()
                 if not hasattr(self, "metrics_firewall_rejected_count"):
                     self.metrics_firewall_rejected_count = {}
-                self.metrics_firewall_rejected_count[peer_ip] = self.metrics_firewall_rejected_count.get(peer_ip, 0) + 1
+                with self._lock:
+                    if len(self.metrics_firewall_rejected_count) >= self.MAX_METRICS_ENTRIES and peer_ip not in self.metrics_firewall_rejected_count:
+                        self.metrics_firewall_rejected_count.pop(next(iter(self.metrics_firewall_rejected_count)))
+                    self.metrics_firewall_rejected_count[peer_ip] = self.metrics_firewall_rejected_count.get(peer_ip, 0) + 1
                 self.log_action("security", peer_ip, "smtp/connect", "554 IP Blocked", False)
             return f"554 5.7.1 Access denied: IP address {peer_ip} not allowed"
         return "220 Welcome to smtp2mqtt"
@@ -1041,7 +1128,10 @@ class smtp2mqttHandler:
         trigger_dur = max(0.0001, time.perf_counter() - t_start)
         if not hasattr(self, "metrics_trigger_durations"):
             self.metrics_trigger_durations = {}
-        self.metrics_trigger_durations[address] = trigger_dur
+        with self._lock:
+            if len(self.metrics_trigger_durations) >= self.MAX_METRICS_ENTRIES and address not in self.metrics_trigger_durations:
+                self.metrics_trigger_durations.pop(next(iter(self.metrics_trigger_durations)))
+            self.metrics_trigger_durations[address] = trigger_dur
 
         # Cancel existing reset timer if active and reschedule for new window (sliding window)
         if topic in self.handles:
@@ -1065,7 +1155,10 @@ class smtp2mqttHandler:
 
         if not hasattr(self, "metrics_messages_received_count"):
             self.metrics_messages_received_count = {}
-        self.metrics_messages_received_count[mail_from] = self.metrics_messages_received_count.get(mail_from, 0) + 1
+        with self._lock:
+            if len(self.metrics_messages_received_count) >= self.MAX_METRICS_ENTRIES and mail_from not in self.metrics_messages_received_count:
+                self.metrics_messages_received_count.pop(next(iter(self.metrics_messages_received_count)))
+            self.metrics_messages_received_count[mail_from] = self.metrics_messages_received_count.get(mail_from, 0) + 1
 
         sanitized_sender = (
             mail_from.replace("@", "-")
@@ -1490,12 +1583,15 @@ class smtp2mqttHandler:
             self.isapi_stream_tasks.clear()
 
     async def _isapi_camera_worker(self, ip: str, port: int, sender: str, user: str, pwd: str) -> None:
-        """Maintains persistent HTTP Digest Auth alertStream connection with automatic reconnect."""
+        """Maintains persistent HTTP Digest Auth alertStream connection with automatic exponential backoff reconnect."""
         log.info("[%s] ISAPI stream worker started for %s:%d", sender, ip, port)
+        retry_delay = 2
         while self.isapi_running:
             try:
                 self.isapi_status[sender]["status"] = "connecting"
                 await asyncio.to_thread(self._run_isapi_stream_sync, ip, port, sender, user, pwd)
+                # Successful run: reset retry delay
+                retry_delay = 2
             except asyncio.CancelledError:
                 log.info("[%s] ISAPI stream worker cancelled.", sender)
                 break
@@ -1506,7 +1602,9 @@ class smtp2mqttHandler:
                 break
             self.isapi_status[sender]["status"] = "reconnecting"
             try:
-                await asyncio.sleep(5)
+                log.debug("[%s] Reconnecting ISAPI stream in %d seconds...", sender, retry_delay)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(60, int(retry_delay * 2.5))
             except asyncio.CancelledError:
                 break
 
@@ -1979,6 +2077,21 @@ class smtp2mqttHandler:
             minutes = (uptime % 3600) // 60
             uptime_formatted = f"{hours}h {minutes}m"
 
+        sanitized_isapi_status = {}
+        for s_key, s_val in getattr(self, "isapi_status", {}).items():
+            if isinstance(s_val, dict):
+                s_copy = dict(s_val)
+                if "password" in s_copy:
+                    s_copy["password"] = "******"
+                if "pwd" in s_copy:
+                    s_copy["pwd"] = "******"
+                sanitized_isapi_status[s_key] = s_copy
+            else:
+                sanitized_isapi_status[s_key] = s_val
+
+        with self._lock:
+            recent_acts_copy = list(self.recent_actions)
+
         return {
             "status": "online",
             "mqtt_host": config["MQTT_HOST"],
@@ -1993,14 +2106,14 @@ class smtp2mqttHandler:
             "processed_messages_count": self.processed_messages_count,
             "uptime_seconds": uptime,
             "uptime_formatted": uptime_formatted,
-            "recent_actions": self.recent_actions,
-            "recent_blocked_attempts": getattr(self, "recent_blocked_attempts", []),
+            "recent_actions": recent_acts_copy,
+            "recent_blocked_attempts": list(getattr(self, "recent_blocked_attempts", [])),
             "version": VERSION,
             "latest_version": self.latest_version,
             "update_available": self.update_available,
             "version_check_status": self.version_check_status,
             "isapi_enabled": parse_bool(config.get("ENABLE_ISAPI", False)),
-            "isapi_status": getattr(self, "isapi_status", {}),
+            "isapi_status": sanitized_isapi_status,
         }
 
     def generate_prometheus_metrics(self) -> str:
@@ -2961,7 +3074,8 @@ def main():
 
     log.info("Starting smtp2mqtt gateway...")
 
-    log.debug("Configuration: %s", ", ".join([f"{k}={v}" for k, v in config.items()]))
+    masked_cfg = mask_sensitive_config(config)
+    log.debug("Configuration: %s", ", ".join([f"{k}={v}" for k, v in masked_cfg.items()]))
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

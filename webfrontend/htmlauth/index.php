@@ -1258,7 +1258,15 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 </div>
 
                 <!-- Recent Events Table -->
-                <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">📋 Poslední Zachycené Detekce & Paket Inspector</h4>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin: 0 0 12px 0; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px; flex-wrap: wrap; gap: 8px;">
+                    <h4 style="margin: 0; color: #2e7d32; font-size: 1rem;">📋 Poslední Zachycené Detekce & Paket Inspector</h4>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                        <button type="button" onclick="setEventFilter('ALL')" id="flt-all" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; background: #e2e8f0; font-weight: 700;">Vše</button>
+                        <button type="button" onclick="setEventFilter('isapi')" id="flt-isapi" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; color: #15803d;">⚡ Pouze ISAPI</button>
+                        <button type="button" onclick="setEventFilter('smtp')" id="flt-smtp" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; color: #0284c7;">✉️ Pouze SMTP</button>
+                        <button type="button" onclick="setEventFilter('smart')" id="flt-smart" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.8rem; color: #7e22ce;">🛡️ Pouze Chytré</button>
+                    </div>
+                </div>
                 <div style="overflow-x: auto;">
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
                         <thead>
@@ -1824,17 +1832,91 @@ $active_tab = $_GET['tab'] ?? 'settings';
         const smtpPort = parseInt(document.getElementById('smtp_port')?.value);
         const webPort = parseInt(document.getElementById('web_port')?.value);
         if (isNaN(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
-            alert('Neplatný SMTP Port! Zadejte číslo 1–65535.');
+            showToast('Neplatný SMTP Port! Zadejte číslo 1–65535.', false);
             return false;
         }
         if (isNaN(webPort) || webPort < 1 || webPort > 65535) {
-            alert('Neplatný Web Port! Zadejte číslo 1–65535.');
+            showToast('Neplatný Web Port! Zadejte číslo 1–65535.', false);
             return false;
         }
         return true;
     }
 
+    let currentEventFilter = 'ALL';
+    let cachedRecentActions = [];
+
+    function setEventFilter(filter) {
+        currentEventFilter = filter;
+        ['all', 'isapi', 'smtp', 'smart'].forEach(f => {
+            const btn = document.getElementById('flt-' + f);
+            if (btn) {
+                if (f === filter.toLowerCase()) {
+                    btn.style.background = '#e2e8f0';
+                    btn.style.fontWeight = '700';
+                } else {
+                    btn.style.background = '#f1f5f9';
+                    btn.style.fontWeight = '600';
+                }
+            }
+        });
+        renderRecentActionsTable();
+    }
+
+    function renderRecentActionsTable() {
+        const tbody = document.getElementById('dash-events-tbody');
+        if (!tbody) return;
+
+        let filtered = cachedRecentActions;
+        if (currentEventFilter === 'isapi') {
+            filtered = cachedRecentActions.filter(a => a.source === 'isapi' || a.event_details?.source === 'isapi');
+        } else if (currentEventFilter === 'smtp') {
+            filtered = cachedRecentActions.filter(a => a.source === 'smtp' || (!a.source && a.type !== 'reset' && a.type !== 'system'));
+        } else if (currentEventFilter === 'smart') {
+            filtered = cachedRecentActions.filter(a => {
+                const et = a.event_type || a.event_details?.event_type || '';
+                const tg = a.event_details?.target_type || '';
+                return ['line_crossing', 'intrusion', 'region_entrance', 'region_exiting', 'face'].includes(et) || ['human', 'vehicle'].includes(tg);
+            });
+        }
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; color: #94a3b8;">Žádné události odpovídající filtru.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = filtered.map(act => {
+            const icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : (act.type === 'system' ? '⚙️' : 'ℹ️')));
+            const label = act.event_label || act.type || '';
+            const senderDisplay = act.sender ? act.sender : 'system';
+            const targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${act.event_details.target_type}</span>` : '';
+            
+            let sourceBadge = '';
+            const src = act.source || act.event_details?.source || (act.type === 'reset' ? 'reset' : 'smtp');
+            if (src === 'isapi') {
+                sourceBadge = '<span style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">⚡ ISAPI (&lt;10ms)</span>';
+            } else if (src === 'smtp') {
+                sourceBadge = '<span style="background: #f8fafc; color: #334155; border: 1px solid #cbd5e1; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">✉️ SMTP Email</span>';
+            } else if (src === 'reset') {
+                sourceBadge = '<span style="background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">🔄 Auto-Reset</span>';
+            } else {
+                sourceBadge = '<span style="background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem;">⚙️ Systém</span>';
+            }
+
+            return `
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.82rem;">${act.timestamp || ''}</td>
+                <td style="padding: 8px 12px;">${sourceBadge}</td>
+                <td style="padding: 8px 12px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${label}</strong>${targetStr}</span></td>
+                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;">${senderDisplay}</td>
+                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem; color: #0369a1;">${act.topic || ''}</td>
+                <td style="padding: 8px 12px; font-weight: 600;">${act.payload || ''}</td>
+                <td style="padding: 8px 12px;"><span class="${act.status === 'SUCCESS' ? 'lox-badge-success' : 'lox-badge-danger'}">${act.status || ''}</span></td>
+            </tr>`;
+        }).join('');
+    }
+
     function refreshDashboardJSON() {
+        if (document.hidden) return; // Sleep polling when browser tab is inactive
         fetch('?tab=dashboard&_ajax=json')
             .then(r => r.json())
             .then(data => {
@@ -1881,41 +1963,9 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 const msgEl = document.getElementById('dash-msg-count');
                 if (msgEl) msgEl.textContent = data.status?.processed_messages_count || '0';
 
-                const tbody = document.getElementById('dash-events-tbody');
-                if (tbody && data.status?.recent_actions) {
-                    if (data.status.recent_actions.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; color: #94a3b8;">Zatím nebyly zaznamenány žádné události.</td></tr>';
-                    } else {
-                        tbody.innerHTML = data.status.recent_actions.map(act => {
-                            const icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : (act.type === 'system' ? '⚙️' : 'ℹ️')));
-                            const label = act.event_label || act.type || '';
-                            const senderDisplay = act.sender ? act.sender : 'system';
-                            const targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${act.event_details.target_type}</span>` : '';
-                            
-                            let sourceBadge = '';
-                            const src = act.source || act.event_details?.source || (act.type === 'reset' ? 'reset' : 'smtp');
-                            if (src === 'isapi') {
-                                sourceBadge = '<span style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">⚡ ISAPI (&lt;10ms)</span>';
-                            } else if (src === 'smtp') {
-                                sourceBadge = '<span style="background: #f8fafc; color: #334155; border: 1px solid #cbd5e1; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">✉️ SMTP Email</span>';
-                            } else if (src === 'reset') {
-                                sourceBadge = '<span style="background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">🔄 Auto-Reset</span>';
-                            } else {
-                                sourceBadge = '<span style="background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem;">⚙️ Systém</span>';
-                            }
-
-                            return `
-                            <tr style="border-bottom: 1px solid #f1f5f9;">
-                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.82rem;">${act.timestamp || ''}</td>
-                                <td style="padding: 8px 12px;">${sourceBadge}</td>
-                                <td style="padding: 8px 12px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${label}</strong>${targetStr}</span></td>
-                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;">${senderDisplay}</td>
-                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem; color: #0369a1;">${act.topic || ''}</td>
-                                <td style="padding: 8px 12px; font-weight: 600;">${act.payload || ''}</td>
-                                <td style="padding: 8px 12px;"><span class="${act.status === 'SUCCESS' ? 'lox-badge-success' : 'lox-badge-danger'}">${act.status || ''}</span></td>
-                            </tr>
-                        `}).join('');
-                    }
+                if (data.status?.recent_actions) {
+                    cachedRecentActions = data.status.recent_actions;
+                    renderRecentActionsTable();
                 }
             })
             .catch(() => {});
