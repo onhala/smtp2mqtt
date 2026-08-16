@@ -706,7 +706,8 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "2.1.0"
+# Application version
+VERSION = "2.1.1"
 
 
 class smtp2mqttHandler:
@@ -1301,8 +1302,17 @@ class smtp2mqttHandler:
             log.info("[%s] Early ISAPI trigger publishing MQTT payload for topic: %s (event: %s, target: %s)", sender, topic, event_type, target_type)
             await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", sender, False, event_meta)
         else:
-            log.info("[%s] Topic %s already triggered. Extending reset timer (Variant B, source: %s).", sender, topic, source)
-            self.log_action("trigger (extended)", sender, topic, config["MQTT_PAYLOAD"], True, event_meta)
+            log.debug("[%s] Topic %s already triggered. Extending reset timer (Variant B, source: %s).", sender, topic, source)
+            # Update latest active action in recent_actions without creating flood of duplicate rows
+            updated_existing = False
+            for act in self.recent_actions:
+                if act.get("topic") == topic and act.get("status") == "SUCCESS" and "trigger" in act.get("type", ""):
+                    act["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    act["event_details"] = event_meta
+                    updated_existing = True
+                    break
+            if not updated_existing:
+                self.log_action("trigger (extended)", sender, topic, config["MQTT_PAYLOAD"], True, event_meta)
 
         trigger_dur = max(0.0001, time.perf_counter() - t_start)
         if not hasattr(self, "metrics_trigger_durations"):
@@ -1319,8 +1329,8 @@ class smtp2mqttHandler:
                 reset_time_seconds, self._trigger_reset, topic
             )
 
-        # Publish event metadata topic if enabled
-        if parse_bool(config.get("ENABLE_EVENT_TOPIC", True)):
+        # Publish event metadata topic if enabled (only on initial trigger)
+        if parse_bool(config.get("ENABLE_EVENT_TOPIC", True)) and not is_triggered:
             event_topic = f"{topic}/event"
             event_payload = json.dumps({
                 "event": event_type,

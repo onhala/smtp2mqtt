@@ -179,14 +179,22 @@ if (!isset($config['FIREWALL_RULES']) || !is_array($config['FIREWALL_RULES'])) {
 
 $isapi_cameras_list = [];
 if (!empty($config['ISAPI_CAMERAS'])) {
-    if (is_array($config['ISAPI_CAMERAS'])) {
-        $isapi_cameras_list = $config['ISAPI_CAMERAS'];
+    $raw_cams = $config['ISAPI_CAMERAS'];
+    if (is_array($raw_cams)) {
+        $isapi_cameras_list = $raw_cams;
     } else {
-        $decoded = json_decode($config['ISAPI_CAMERAS'], true);
+        $str_val = strval($raw_cams);
+        if (substr($str_val, 0, 1) === '"' && substr($str_val, -1) === '"') {
+            $str_val = stripslashes(substr($str_val, 1, -1));
+        }
+        $decoded = json_decode($str_val, true);
+        if (is_string($decoded)) {
+            $decoded = json_decode($decoded, true);
+        }
         if (is_array($decoded)) {
             $isapi_cameras_list = $decoded;
         } else {
-            foreach (explode(',', strval($config['ISAPI_CAMERAS'])) as $entry) {
+            foreach (explode(',', $str_val) as $entry) {
                 $entry = trim($entry);
                 if (empty($entry)) continue;
                 $parts = explode(':', $entry);
@@ -1168,7 +1176,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
             </div>
             <div class="lox-card-body" id="dashboard-body">
                 <!-- Status Cards Grid -->
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 24px;">
                     <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px;">
                         <div style="font-size: 0.85rem; font-weight: 600; color: #64748b;">📬 SMTP Server</div>
                         <div style="font-size: 1.4rem; font-weight: 800;" id="dash-smtp-status">⏳ Načítání...</div>
@@ -1176,6 +1184,10 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px;">
                         <div style="font-size: 0.85rem; font-weight: 600; color: #64748b;">📡 MQTT Broker</div>
                         <div style="font-size: 1.4rem; font-weight: 800;" id="dash-mqtt-status">⏳ Načítání...</div>
+                    </div>
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: #166534;">⚡ ISAPI Stream (&lt;10ms)</div>
+                        <div style="font-size: 1.4rem; font-weight: 800; color: #15803d;" id="dash-isapi-status">⏳ Načítání...</div>
                     </div>
                     <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 16px;">
                         <div style="font-size: 0.85rem; font-weight: 600; color: #64748b;">⏱️ Uptime</div>
@@ -1752,6 +1764,28 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 if (mqttEl) {
                     mqttEl.textContent = data.status?.mqtt_connected ? '🟢 Connected' : '🔴 Disconnected';
                     mqttEl.style.color = data.status?.mqtt_connected ? '#15803d' : '#b91c1c';
+                }
+
+                const isapiEl = document.getElementById('dash-isapi-status');
+                if (isapiEl) {
+                    if (data.status?.isapi_enabled) {
+                        const streams = data.status.isapi_status || {};
+                        const total = Object.keys(streams).length;
+                        const live = Object.values(streams).filter(s => s.status === 'connected').length;
+                        if (total === 0) {
+                            isapiEl.textContent = '⚪ Žádné kamery';
+                            isapiEl.style.color = '#64748b';
+                        } else if (live === total) {
+                            isapiEl.textContent = `🟢 ${live}/${total} Live`;
+                            isapiEl.style.color = '#15803d';
+                        } else {
+                            isapiEl.textContent = `🟡 ${live}/${total} Live`;
+                            isapiEl.style.color = '#d97706';
+                        }
+                    } else {
+                        isapiEl.textContent = '⚪ Vypnuto';
+                        isapiEl.style.color = '#94a3b8';
+                    }
                 }
 
                 const uptimeEl = document.getElementById('dash-uptime');
