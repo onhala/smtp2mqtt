@@ -53,7 +53,7 @@ def test_parse_hikvision_event():
 
 
 def test_version_consistency():
-    """Verify that plugin.cfg, release.cfg, and webfrontend PHP files consistently report version 1.9.0."""
+    """Verify that plugin.cfg, release.cfg, and webfrontend PHP files consistently report the current version."""
     root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     
     # Check plugin.cfg
@@ -61,15 +61,15 @@ def test_version_consistency():
     if os.path.exists(pcfg_path):
         with open(pcfg_path, "r", encoding="utf-8") as f:
             content = f.read()
-            assert "VERSION=2.0.0" in content
+            assert f"VERSION={smtp2mqtt.VERSION}" in content
 
     # Check release.cfg
     rcfg_path = os.path.join(root_dir, "release.cfg")
     if os.path.exists(rcfg_path):
         with open(rcfg_path, "r", encoding="utf-8") as f:
             content = f.read()
-            assert "VERSION=2.0.0" in content
-            assert "v2.0.0" in content
+            assert f"VERSION={smtp2mqtt.VERSION}" in content
+            assert f"v{smtp2mqtt.VERSION}" in content
 
 
 def test_parse_bool():
@@ -1422,6 +1422,96 @@ async def test_handle_data_associates_attachments_to_recent_actions(monkeypatch)
     handler.cancel_all_resets()
 
 
+@pytest.mark.asyncio
+async def test_enable_event_topic_disabled(monkeypatch):
+    """Verify that when ENABLE_EVENT_TOPIC is False, no metadata message is published to <topic>/event."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    published_topics = []
+    def mock_publish(topic, payload, action_type="trigger", sender="system", wait_for_publish=False):
+        published_topics.append((topic, payload, action_type))
+        handler.log_action(action_type, sender, topic, payload, True)
+
+    monkeypatch.setattr(handler, "mqtt_publish", mock_publish)
+    monkeypatch.setitem(smtp2mqtt.config, "ENABLE_EVENT_TOPIC", "False")
+
+    envelope = mock.MagicMock()
+    envelope.mail_from = "camera@test.com"
+    envelope.content = b"Subject: Motion Detection\r\n\r\nEvent Time: 2026-08-12 20:00:00"
+
+    res = await handler.handle_DATA(None, None, envelope)
+    assert res == "250 Message accepted for delivery"
+
+    if handler.background_tasks:
+        await asyncio.gather(*handler.background_tasks)
+
+    event_topics = [t for t in published_topics if t[0].endswith("/event")]
+    assert len(event_topics) == 0, "Event topic should not be published when ENABLE_EVENT_TOPIC is False"
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_trigger_reset_logging_icon_and_sender(monkeypatch):
+    """Verify that _trigger_reset logs action with type 'reset', sender 'system', and icon '🔄'."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+
+    def mock_publish(topic, payload, action_type="reset", sender="system", wait_for_publish=False):
+        handler.log_action(action_type, sender, topic, payload, True)
+
+    monkeypatch.setattr(handler, "mqtt_publish", mock_publish)
+    handler._trigger_reset("smtp2mqtt/kamera")
+    
+    # Allow event loop to execute any background task scheduled by create_task
+    await asyncio.sleep(0.05)
+
+    reset_actions = [a for a in handler.recent_actions if a["type"] == "reset"]
+    assert len(reset_actions) == 1
+    assert reset_actions[0]["sender"] == "system"
+    assert reset_actions[0]["event_icon"] == "🔄"
+    assert reset_actions[0]["event_label"] == "Auto-Reset (0)"
+    handler.cancel_all_resets()
+
+
+@pytest.mark.asyncio
+async def test_handle_web_client_metrics_endpoint(monkeypatch):
+    """Verify that handle_web_client serves valid Prometheus OpenMetrics on /metrics when enabled."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    monkeypatch.setitem(smtp2mqtt.config, "ENABLE_METRICS", "True")
+
+    class MockReader:
+        async def readline(self):
+            return b"GET /metrics HTTP/1.1\r\n"
+
+    class MockWriter:
+        def __init__(self):
+            self.write_data = b""
+        def write(self, data):
+            self.write_data += data
+        async def drain(self):
+            pass
+
+    reader = MockReader()
+    writer = MockWriter()
+    await handler.handle_web_client(reader, writer)
+    assert b"HTTP/1.1 200 OK" in writer.write_data or b"smtp2mqtt_up 1" in writer.write_data
+    assert b"smtp2mqtt_up 1" in writer.write_data
+    assert b"smtp2mqtt_uptime_seconds" in writer.write_data
+
+
+@pytest.mark.asyncio
+async def test_enable_metrics_disabled(monkeypatch):
+    """Verify that when ENABLE_METRICS is False, /metrics returns indicator that metrics are disabled."""
+    loop = asyncio.get_running_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    monkeypatch.setitem(smtp2mqtt.config, "ENABLE_METRICS", "False")
+
+    metrics_txt = handler.generate_prometheus_metrics()
+    assert "smtp2mqtt_metrics_enabled 0" in metrics_txt
+
+
 
 @pytest.mark.asyncio
 async def test_handle_web_client_read_file_binary_exception(monkeypatch):
@@ -1949,16 +2039,16 @@ async def test_perform_version_check_updates_state():
     handler = smtp2mqtt.smtp2mqttHandler(loop)
     
     # We will patch _fetch_latest_release_from_github to return a newer version
-    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v2.0.0") as mock_fetch:
+    with mock.patch.object(handler, "_fetch_latest_release_from_github", return_value="v3.0.0") as mock_fetch:
         await handler.perform_version_check()
         mock_fetch.assert_called_once()
-        assert handler.latest_version == "v2.0.0"
+        assert handler.latest_version == "v3.0.0"
         assert handler.update_available is True
         
         # Verify the get_status_json exposes this
         status = handler.get_status_json()
         assert status["version"] == smtp2mqtt.VERSION
-        assert status["latest_version"] == "v2.0.0"
+        assert status["latest_version"] == "v3.0.0"
         assert status["update_available"] is True
 
 

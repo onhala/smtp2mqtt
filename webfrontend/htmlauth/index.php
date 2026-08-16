@@ -432,6 +432,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         $config['MQTT_PAYLOAD'] = trim($_POST['mqtt_payload'] ?? '1');
         $config['MQTT_RESET_TIME'] = intval($_POST['mqtt_reset_time'] ?? 10);
         $config['MQTT_RESET_PAYLOAD'] = trim($_POST['mqtt_reset_payload'] ?? '0');
+        $config['ENABLE_EVENT_TOPIC'] = isset($_POST['enable_event_topic']) ? "True" : "False";
+        $config['ENABLE_METRICS'] = isset($_POST['enable_metrics']) ? "True" : "False";
         $config['SAVE_ATTACHMENTS'] = isset($_POST['save_attachments']) ? "True" : "False";
         $config['CLEANUP_ATTACHMENTS_DAYS'] = intval($_POST['cleanup_attachments_days'] ?? 30);
         $config['CLEANUP_LOGS_DAYS'] = intval($_POST['cleanup_logs_days'] ?? 30);
@@ -856,6 +858,26 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         <div>
                             <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">MQTT Reset Payload:</label>
                             <input type="text" name="mqtt_reset_payload" value="<?php echo htmlspecialchars($config['MQTT_RESET_PAYLOAD']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 25px; background: #f8fafc; padding: 12px 15px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" name="enable_event_topic" id="enable_event_topic" <?php echo ($config['ENABLE_EVENT_TOPIC'] === "True" || $config['ENABLE_EVENT_TOPIC'] === true || !isset($config['ENABLE_EVENT_TOPIC'])) ? 'checked' : ''; ?>>
+                            <span style="font-weight: 700; color: #1e293b;">Odesílat rozšířené JSON události (&lt;topic&gt;/event)</span>
+                        </label>
+                        <div style="margin-top: 4px; font-size: 0.83rem; color: #64748b; margin-left: 28px;">
+                            Vypněte, pokud chcete na MQTT posílat pouze čistý trigger/reset stav (1/0) a nepoužívat pod-topic pro detailní telemetry data kamer.
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 25px; background: #f8fafc; padding: 12px 15px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" name="enable_metrics" id="enable_metrics" <?php echo ($config['ENABLE_METRICS'] === "True" || $config['ENABLE_METRICS'] === true || !isset($config['ENABLE_METRICS'])) ? 'checked' : ''; ?>>
+                            <span style="font-weight: 700; color: #2e7d32;">📊 Povolit Prometheus HTTP Exporter (&lt;host&gt;:8080/metrics)</span>
+                        </label>
+                        <div style="margin-top: 4px; font-size: 0.83rem; color: #64748b; margin-left: 28px;">
+                            Aktivuje nativní OpenMetrics endpoint <code>/metrics</code> na portu Web UI (výchozí 8080) pro sběr telemetrie (latence kamer, propustnost zpráv, chyby firewallu) do Promethea a Grafany. Vypněte, pokud observabilitu v síti nevyužíváte.
                         </div>
                     </div>
 
@@ -1348,14 +1370,15 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #94a3b8;">Zatím nebyly zaznamenány žádné události.</td></tr>';
                     } else {
                         tbody.innerHTML = data.status.recent_actions.map(act => {
-                            const icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : 'ℹ️'));
+                            const icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : (act.type === 'system' ? '⚙️' : 'ℹ️')));
                             const label = act.event_label || act.type || '';
+                            const senderDisplay = act.sender ? act.sender : 'system';
                             const targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${act.event_details.target_type}</span>` : '';
                             return `
                             <tr style="border-bottom: 1px solid #f1f5f9;">
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.82rem;">${act.timestamp || ''}</td>
                                 <td style="padding: 8px 12px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${label}</strong>${targetStr}</span></td>
-                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;">${act.sender || ''}</td>
+                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;">${senderDisplay}</td>
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem; color: #0369a1;">${act.topic || ''}</td>
                                 <td style="padding: 8px 12px; font-weight: 600;">${act.payload || ''}</td>
                                 <td style="padding: 8px 12px;"><span class="${act.status === 'SUCCESS' ? 'lox-badge-success' : 'lox-badge-danger'}">${act.status || ''}</span></td>

@@ -19,15 +19,17 @@ for site in extra_paths:
 
 import asyncio
 import email
+import email.utils
 import ipaddress
 import json
 import logging
 import re
 import signal
 import socket
+import time
 import urllib.request
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timezone
 from email.policy import default
 from typing import Any, Dict, List, Optional, Union
 
@@ -72,6 +74,7 @@ except ModuleNotFoundError as err:
 defaults: Dict[str, Union[str, int]] = {
     "SMTP_PORT": 1025,
     "SMTP_HOST": "0.0.0.0",
+    "SMTP_SERVER_HOSTNAME": "smtp2mqtt",
     "ALLOWED_IPS": "192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 127.0.0.1",
     "MQTT_HOST": "localhost",
     "MQTT_PORT": 1883,
@@ -81,6 +84,8 @@ defaults: Dict[str, Union[str, int]] = {
     "MQTT_PAYLOAD": "1",
     "MQTT_RESET_TIME": "10",
     "MQTT_RESET_PAYLOAD": "0",
+    "ENABLE_EVENT_TOPIC": "True",
+    "ENABLE_METRICS": "True",
     "SAVE_ATTACHMENTS": "False",
     "SAVE_ATTACHMENTS_DURING_RESET_TIME": "False",
     "DEBUG": "False",
@@ -240,7 +245,7 @@ def load_file_config(paths: Dict[str, str]) -> Dict[str, Any]:
 
 loxberry_paths = get_loxberry_paths()
 if "LBHOME" in loxberry_paths:
-    defaults["ENABLE_WEB"] = "False"
+    defaults["ENABLE_WEB"] = "True"
 
 lb_mqtt_defaults = load_loxberry_mqtt_config(loxberry_paths)
 file_defaults = load_file_config(loxberry_paths)
@@ -504,7 +509,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "1.8.27"
+VERSION = "2.0.1"
 
 
 class smtp2mqttHandler:
@@ -524,6 +529,31 @@ class smtp2mqttHandler:
         self.latest_version: Optional[str] = None
         self.update_available: bool = False
         self.version_check_status: str = "pending"
+
+        # Prometheus metrics datastructures
+        self.metrics_events_count: Dict[Tuple[str, str, str], int] = {}
+        self.metrics_messages_received_count: Dict[str, int] = {}
+        self.metrics_mqtt_published_count: Dict[Tuple[str, str, str], int] = {}
+        self.metrics_errors_count: Dict[str, int] = {}
+        self.metrics_firewall_rejected_count: Dict[str, int] = {}
+        self.metrics_camera_latencies: Dict[str, float] = {}
+        self.metrics_trigger_durations: Dict[str, float] = {}
+        self.metrics_processing_durations: List[float] = []
+
+        # Pre-compile allowed IP networks for zero-latency connection checks
+        self.allowed_networks: List[Any] = []
+        allowed_str = str(config.get("ALLOWED_IPS", "")).strip()
+        if allowed_str and allowed_str != "*":
+            for net_str in allowed_str.split(","):
+                net_str = net_str.strip()
+                if net_str and net_str != "*":
+                    try:
+                        if "/" not in net_str:
+                            self.allowed_networks.append(ipaddress.ip_network(f"{net_str}/32", strict=False))
+                        else:
+                            self.allowed_networks.append(ipaddress.ip_network(net_str, strict=False))
+                    except ValueError as e:
+                        log.warning("Invalid IP network pattern in ALLOWED_IPS: %s (%s)", net_str, e)
         
         # MQTT Broker connection monitoring
         self.mqtt_connected_status: Optional[bool] = None
@@ -596,17 +626,31 @@ class smtp2mqttHandler:
         else:
             status = "FAILED"
             
+        sender_final = sender if sender else "system"
+        if action_type == "reset":
+            event_type = "reset"
+            event_label = "Auto-Reset (0)"
+            event_icon = "🔄"
+        elif action_type == "system":
+            event_type = "system"
+            event_label = "System Action"
+            event_icon = "⚙️"
+        else:
+            event_type = "motion"
+            event_label = "Motion Detection"
+            event_icon = "📹"
+
         action = {
             "timestamp": timestamp,
             "type": action_type,
-            "sender": sender,
+            "sender": sender_final,
             "topic": topic,
             "payload": payload,
             "status": status,
             "attachments": [],
-            "event_type": "motion",
-            "event_label": "Motion Detection",
-            "event_icon": "📹",
+            "event_type": event_type,
+            "event_label": event_label,
+            "event_icon": event_icon,
             "event_details": {}
         }
         self.recent_actions.insert(0, action)
@@ -662,26 +706,32 @@ class smtp2mqttHandler:
         except ValueError:
             return False
 
-        for net_str in allowed_ips_setting.split(","):
-            net_str = net_str.strip()
-            if not net_str:
-                continue
-            if net_str == "*":
-                return True
-            try:
-                if "/" not in net_str:
-                    net = ipaddress.ip_network(f"{net_str}/32", strict=False)
-                else:
-                    net = ipaddress.ip_network(net_str, strict=False)
-                if client_addr in net:
-                    return True
-            except ValueError as e:
-                log.warning("Invalid IP network pattern in ALLOWED_IPS: %s (%s)", net_str, e)
+        if not hasattr(self, "_cached_allowed_str") or self._cached_allowed_str != allowed_ips_setting:
+            self._cached_allowed_str = allowed_ips_setting
+            self._cached_allowed_nets = []
+            for net_str in allowed_ips_setting.split(","):
+                net_str = net_str.strip()
+                if not net_str:
+                    continue
+                if net_str == "*":
+                    self._cached_allowed_nets = None
+                    break
+                try:
+                    if "/" not in net_str:
+                        self._cached_allowed_nets.append(ipaddress.ip_network(f"{net_str}/32", strict=False))
+                    else:
+                        self._cached_allowed_nets.append(ipaddress.ip_network(net_str, strict=False))
+                except ValueError as e:
+                    log.warning("Invalid IP network pattern in ALLOWED_IPS: %s (%s)", net_str, e)
 
-        return False
+        if self._cached_allowed_nets is None:
+            return True
+        return any(client_addr in net for net in self._cached_allowed_nets)
 
     async def handle_CONNECT(self, server: Any, session: Any, envelope: Any) -> str:
         """Enforces IP Whitelist filtering on incoming SMTP connections."""
+        if session:
+            setattr(session, "_connect_time", time.perf_counter())
         peer_ip = session.peer[0] if session and hasattr(session, "peer") and session.peer else None
         if not self.is_ip_allowed(peer_ip):
             log.warning("Rejected SMTP connection from unauthorized IP: %s", peer_ip)
@@ -704,6 +754,9 @@ class smtp2mqttHandler:
                     })
                     if len(self.recent_blocked_attempts) > 10:
                         self.recent_blocked_attempts.pop()
+                if not hasattr(self, "metrics_firewall_rejected_count"):
+                    self.metrics_firewall_rejected_count = {}
+                self.metrics_firewall_rejected_count[peer_ip] = self.metrics_firewall_rejected_count.get(peer_ip, 0) + 1
                 self.log_action("security", peer_ip, "smtp/connect", "554 IP Blocked", False)
             return f"554 5.7.1 Access denied: IP address {peer_ip} not allowed"
         return "220 Welcome to smtp2mqtt"
@@ -728,6 +781,7 @@ class smtp2mqttHandler:
 
         # Check if topic is currently triggered (in reset time window)
         is_triggered = topic in self.handles
+        t_start = getattr(session, "_connect_time", None) or time.perf_counter()
 
         if not is_triggered:
             log.debug("Early-dispatching MQTT publish for trigger payload on MAIL FROM...")
@@ -735,6 +789,11 @@ class smtp2mqttHandler:
         else:
             log.info("Topic %s is already in triggered state. Extending reset timer (Variant B) without duplicate ON publish.", topic)
             self.log_action("trigger (extended)", address, topic, config["MQTT_PAYLOAD"], True)
+
+        trigger_dur = max(0.0001, time.perf_counter() - t_start)
+        if not hasattr(self, "metrics_trigger_durations"):
+            self.metrics_trigger_durations = {}
+        self.metrics_trigger_durations[address] = trigger_dur
 
         # Cancel existing reset timer if active and reschedule for new window (sliding window)
         if topic in self.handles:
@@ -755,6 +814,10 @@ class smtp2mqttHandler:
         """Processes incoming SMTP email messages."""
         mail_from = envelope.mail_from
         log.info("Received SMTP DATA payload from %s", mail_from)
+
+        if not hasattr(self, "metrics_messages_received_count"):
+            self.metrics_messages_received_count = {}
+        self.metrics_messages_received_count[mail_from] = self.metrics_messages_received_count.get(mail_from, 0) + 1
 
         sanitized_sender = (
             mail_from.replace("@", "-")
@@ -819,6 +882,48 @@ class smtp2mqttHandler:
 
             event_info = parse_hikvision_event(subject, body_text)
 
+            # Record Prometheus metrics for event types and end-to-end camera latency
+            cam_name = event_info.get("camera_name") or mail_from
+            ev_key = (cam_name, event_info.get("event_type", "motion"), event_info.get("target_type", "unknown"))
+            if not hasattr(self, "metrics_events_count"):
+                self.metrics_events_count = {}
+            self.metrics_events_count[ev_key] = self.metrics_events_count.get(ev_key, 0) + 1
+
+            ev_time_str = event_info.get("event_time") or (msg.get("Date") if msg and hasattr(msg, "get") else None)
+            if ev_time_str:
+                try:
+                    ev_timestamp = None
+                    # 1. Try RFC 2822 date parsing with timezone offset first
+                    parsed_tz = email.utils.parsedate_tz(str(ev_time_str))
+                    if parsed_tz:
+                        ev_timestamp = email.utils.mktime_tz(parsed_tz)
+                    else:
+                        clean_t = str(ev_time_str).replace(",", " ").strip()
+                        try:
+                            dt = datetime.fromisoformat(clean_t)
+                            if dt.tzinfo is None:
+                                ev_timestamp = dt.astimezone().timestamp()
+                            else:
+                                ev_timestamp = dt.timestamp()
+                        except Exception:
+                            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%d.%m.%Y %H:%M:%S"):
+                                try:
+                                    dt = datetime.strptime(clean_t, fmt)
+                                    ev_timestamp = dt.astimezone().timestamp()
+                                    break
+                                except ValueError:
+                                    continue
+
+                    if ev_timestamp is not None:
+                        now_ts = datetime.now().timestamp()
+                        latency = max(0.0, now_ts - ev_timestamp)
+                        if latency < 86400:
+                            if not hasattr(self, "metrics_camera_latencies"):
+                                self.metrics_camera_latencies = {}
+                            self.metrics_camera_latencies[cam_name] = latency
+                except Exception:
+                    pass
+
             saved_attachments = []
             if config.get("SAVE_ATTACHMENTS", True):
                 saved_attachments = await asyncio.to_thread(self.save_attachments, msg, topic, is_triggered)
@@ -842,21 +947,24 @@ class smtp2mqttHandler:
 
             self.save_status_file()
 
-            # Publish detailed MQTT JSON Event Sub-topic: <topic>/event
-            event_topic = f"{topic}/event"
-            event_payload = json.dumps({
-                "event": event_info["event_type"],
-                "label": event_info["event_label"],
-                "line": event_info["line_number"],
-                "region": event_info["region_number"],
-                "target": event_info["target_type"],
-                "camera_name": event_info["camera_name"],
-                "device_model": event_info["device_model"],
-                "event_time": event_info["event_time"],
-                "attachments": [a["filename"] for a in saved_attachments] if saved_attachments else []
-            }, ensure_ascii=False)
+            # Publish detailed MQTT JSON Event Sub-topic: <topic>/event if enabled
+            if parse_bool(config.get("ENABLE_EVENT_TOPIC", True)):
+                event_topic = f"{topic}/event"
+                event_payload = json.dumps({
+                    "event": event_info["event_type"],
+                    "label": event_info["event_label"],
+                    "line": event_info["line_number"],
+                    "region": event_info["region_number"],
+                    "target": event_info["target_type"],
+                    "camera_name": event_info["camera_name"],
+                    "device_model": event_info["device_model"],
+                    "event_time": event_info["event_time"],
+                    "attachments": [a["filename"] for a in saved_attachments] if saved_attachments else []
+                }, ensure_ascii=False)
 
-            await asyncio.to_thread(self.mqtt_publish, event_topic, event_payload, "event_metadata", mail_from)
+                await asyncio.to_thread(self.mqtt_publish, event_topic, event_payload, "event_metadata", mail_from)
+            else:
+                log.debug("Detailed event sub-topic publishing is disabled by ENABLE_EVENT_TOPIC configuration.")
 
         except Exception:
             log.exception("Error processing email message or attachments in the background")
@@ -1269,6 +1377,89 @@ class smtp2mqttHandler:
             "update_available": self.update_available,
             "version_check_status": self.version_check_status,
         }
+
+    def generate_prometheus_metrics(self) -> str:
+        """Generates native OpenMetrics / Prometheus text output for scraping."""
+        if not parse_bool(config.get("ENABLE_METRICS", True)):
+            return (
+                "# HELP smtp2mqtt_metrics_enabled Metrics exporter status (0 = disabled by config)\n"
+                "# TYPE smtp2mqtt_metrics_enabled gauge\n"
+                "smtp2mqtt_metrics_enabled 0\n"
+            )
+
+        lines = []
+        uptime = int((datetime.now() - self.start_time).total_seconds())
+        mqtt_ok = 1 if (self.mqtt_connected_status if self.mqtt_connected_status is not None else False) else 0
+        smtp_ok = 1 if self.smtp_connected_status else 0
+
+        lines.append("# HELP smtp2mqtt_up Service operational status (1 = up)")
+        lines.append("# TYPE smtp2mqtt_up gauge")
+        lines.append("smtp2mqtt_up 1")
+
+        lines.append("# HELP smtp2mqtt_uptime_seconds Total uptime of the service in seconds")
+        lines.append("# TYPE smtp2mqtt_uptime_seconds counter")
+        lines.append(f"smtp2mqtt_uptime_seconds {uptime}")
+
+        lines.append("# HELP smtp2mqtt_mqtt_connected Connection status to MQTT broker (1 = connected, 0 = disconnected)")
+        lines.append("# TYPE smtp2mqtt_mqtt_connected gauge")
+        lines.append(f"smtp2mqtt_mqtt_connected {mqtt_ok}")
+
+        lines.append("# HELP smtp2mqtt_smtp_listener_active SMTP listener status (1 = active, 0 = inactive)")
+        lines.append("# TYPE smtp2mqtt_smtp_listener_active gauge")
+        lines.append(f"smtp2mqtt_smtp_listener_active {smtp_ok}")
+
+        lines.append("# HELP smtp2mqtt_processed_messages_total Total count of processed SMTP messages")
+        lines.append("# TYPE smtp2mqtt_processed_messages_total counter")
+        lines.append(f"smtp2mqtt_processed_messages_total {self.processed_messages_count}")
+
+        lines.append("# HELP smtp2mqtt_active_reset_timers Current number of active topic reset timers")
+        lines.append("# TYPE smtp2mqtt_active_reset_timers gauge")
+        lines.append(f"smtp2mqtt_active_reset_timers {len(self.handles)}")
+
+        # Camera to MQTT Latencies
+        lines.append("# HELP smtp2mqtt_camera_to_mqtt_latency_seconds Estimated event age / clock skew from camera detection timestamp in seconds")
+        lines.append("# TYPE smtp2mqtt_camera_to_mqtt_latency_seconds gauge")
+        cam_latencies = getattr(self, "metrics_camera_latencies", {})
+        if cam_latencies:
+            for cam, lat in cam_latencies.items():
+                safe_cam = str(cam).replace('"', '\\"')
+                lines.append(f'smtp2mqtt_camera_to_mqtt_latency_seconds{{camera="{safe_cam}"}} {lat:.4f}')
+        else:
+            lines.append('smtp2mqtt_camera_to_mqtt_latency_seconds{camera="default"} 0.0')
+
+        # Real Trigger Execution Duration
+        lines.append("# HELP smtp2mqtt_trigger_duration_seconds Real execution duration from SMTP connection/MAIL FROM to MQTT publish in seconds")
+        lines.append("# TYPE smtp2mqtt_trigger_duration_seconds gauge")
+        trig_durations = getattr(self, "metrics_trigger_durations", {})
+        if trig_durations:
+            for cam, dur in trig_durations.items():
+                safe_cam = str(cam).replace('"', '\\"')
+                lines.append(f'smtp2mqtt_trigger_duration_seconds{{camera="{safe_cam}"}} {dur:.4f}')
+        else:
+            lines.append('smtp2mqtt_trigger_duration_seconds{camera="default"} 0.0')
+
+        # Events breakdown
+        lines.append("# HELP smtp2mqtt_events_detected_total Total count of security events detected by camera, type, and target")
+        lines.append("# TYPE smtp2mqtt_events_detected_total counter")
+        events_counter = getattr(self, "metrics_events_count", {})
+        if events_counter:
+            for (cam, ev_type, target), count in events_counter.items():
+                safe_cam = str(cam).replace('"', '\\"')
+                lines.append(f'smtp2mqtt_events_detected_total{{camera="{safe_cam}",event_type="{ev_type}",target="{target}"}} {count}')
+        else:
+            lines.append('smtp2mqtt_events_detected_total{camera="default",event_type="motion",target="unknown"} 0')
+
+        # Firewall rejected attempts
+        lines.append("# HELP smtp2mqtt_firewall_rejected_total Total connection attempts blocked by ALLOWED_IPS firewall")
+        lines.append("# TYPE smtp2mqtt_firewall_rejected_total counter")
+        blocked_counter = getattr(self, "metrics_firewall_rejected_count", {})
+        if blocked_counter:
+            for ip, count in blocked_counter.items():
+                lines.append(f'smtp2mqtt_firewall_rejected_total{{ip="{ip}"}} {count}')
+        else:
+            lines.append('smtp2mqtt_firewall_rejected_total{ip="none"} 0')
+
+        return "\n".join(lines) + "\n"
 
     def get_dashboard_html(self) -> str:
         """Returns the complete, responsive, premium dark mode HTML dashboard."""
@@ -1954,6 +2145,9 @@ class smtp2mqttHandler:
                 status_dict = self.get_status_json()
                 body = json.dumps(status_dict, indent=2).encode("utf-8")
                 content_type = "application/json"
+            elif path == "/metrics":
+                body = self.generate_prometheus_metrics().encode("utf-8")
+                content_type = "text/plain; version=0.0.4; charset=utf-8"
             elif path == "/":
                 body = self.get_dashboard_html().encode("utf-8")
                 content_type = "text/html; charset=utf-8"
@@ -2121,6 +2315,7 @@ def main():
         loop=loop,
         hostname=config.get("SMTP_HOST", "0.0.0.0"),
         port=config["SMTP_PORT"],
+        server_hostname=str(config.get("SMTP_SERVER_HOSTNAME", "smtp2mqtt")),
     )
     handler.smtp_controller = controller
 
@@ -2130,18 +2325,19 @@ def main():
 
     # Start the web server if enabled
     web_server = None
-    if config["ENABLE_WEB"]:
+    if parse_bool(config.get("ENABLE_WEB", True)):
         try:
+            web_port = int(config.get("WEB_PORT", 8080))
             web_server = loop.run_until_complete(
                 asyncio.start_server(
                     handler.handle_web_client,
                     "0.0.0.0",
-                    config["WEB_PORT"]
+                    web_port
                 )
             )
-            log.info("Web server is listening on http://0.0.0.0:%d", config["WEB_PORT"])
+            log.info("Web server is listening on http://0.0.0.0:%d", web_port)
         except Exception as e:
-            log.error("Failed to start web server on port %d: %s", config["WEB_PORT"], e)
+            log.error("Failed to start web server on port %s: %s", config.get("WEB_PORT"), e)
 
     # Graceful shutdown orchestration
     def handle_shutdown():

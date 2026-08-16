@@ -23,7 +23,7 @@ $L_ini = LBSystem::readlanguage("language.ini");
 $L = array_merge(is_array($L_ini) ? $L_ini : [], $L_json);
 
 // Plugin version dynamically from LoxBerry config
-$plugin_version = $lbpconfig['PLUGIN']['VERSION'] ?? '2.0.0';
+$plugin_version = '2.0.0';
 
 // Define paths safely with fallbacks for LoxBerry environment
 $lbpconfigdir = !empty($lbpconfigdir) ? $lbpconfigdir : (defined('LBPCONFIGDIR') ? LBPCONFIGDIR : "/opt/loxberry/config/plugins/smtp2mqtt");
@@ -432,6 +432,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         $config['MQTT_PAYLOAD'] = trim($_POST['mqtt_payload'] ?? '1');
         $config['MQTT_RESET_TIME'] = intval($_POST['mqtt_reset_time'] ?? 10);
         $config['MQTT_RESET_PAYLOAD'] = trim($_POST['mqtt_reset_payload'] ?? '0');
+        $config['ENABLE_EVENT_TOPIC'] = isset($_POST['enable_event_topic']) ? "True" : "False";
+        $config['ENABLE_METRICS'] = isset($_POST['enable_metrics']) ? "True" : "False";
         $config['SAVE_ATTACHMENTS'] = isset($_POST['save_attachments']) ? "True" : "False";
         $config['CLEANUP_ATTACHMENTS_DAYS'] = intval($_POST['cleanup_attachments_days'] ?? 30);
         $config['CLEANUP_LOGS_DAYS'] = intval($_POST['cleanup_logs_days'] ?? 30);
@@ -736,22 +738,6 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🔒 Bezpečnost & IP Firewall</h4>
                     <div style="margin-bottom: 25px;">
                         <?php 
-                        $status_candidates = [
-                            $lbpdatadir . "/status.json",
-                            "/opt/loxberry/data/plugins/smtp2mqtt/status.json",
-                            "/opt/loxberry/data/plugins/smtp2mqtt/data/status.json",
-                            $lbpconfigdir . "/status.json",
-                            __DIR__ . "/status.json",
-                            "./status.json"
-                        ];
-                        $status_file = $lbpdatadir . "/status.json";
-                        foreach ($status_candidates as $s_cand) {
-                            if (file_exists($s_cand) && filesize($s_cand) > 0) {
-                                $status_file = $s_cand;
-                                break;
-                            }
-                        }
-                        $status_data = file_exists($status_file) ? json_decode(file_get_contents($status_file), true) : null;
                         $recent_blocked = $status_data['recent_blocked_attempts'] ?? [];
                         if (!empty($recent_blocked)): 
                         ?>
@@ -875,6 +861,26 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         </div>
                     </div>
 
+                    <div style="margin-bottom: 25px; background: #f8fafc; padding: 12px 15px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" name="enable_event_topic" id="enable_event_topic" <?php echo ($config['ENABLE_EVENT_TOPIC'] === "True" || $config['ENABLE_EVENT_TOPIC'] === true || !isset($config['ENABLE_EVENT_TOPIC'])) ? 'checked' : ''; ?>>
+                            <span style="font-weight: 700; color: #1e293b;">Odesílat rozšířené JSON události (&lt;topic&gt;/event)</span>
+                        </label>
+                        <div style="margin-top: 4px; font-size: 0.83rem; color: #64748b; margin-left: 28px;">
+                            Vypněte, pokud chcete na MQTT posílat pouze čistý trigger/reset stav (1/0) a nepoužívat pod-topic pro detailní telemetry data kamer.
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 25px; background: #f8fafc; padding: 12px 15px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" name="enable_metrics" id="enable_metrics" <?php echo ($config['ENABLE_METRICS'] === "True" || $config['ENABLE_METRICS'] === true || !isset($config['ENABLE_METRICS'])) ? 'checked' : ''; ?>>
+                            <span style="font-weight: 700; color: #2e7d32;">📊 Povolit Prometheus HTTP Exporter (&lt;host&gt;:8080/metrics)</span>
+                        </label>
+                        <div style="margin-top: 4px; font-size: 0.83rem; color: #64748b; margin-left: 28px;">
+                            Aktivuje nativní OpenMetrics endpoint <code>/metrics</code> na portu Web UI (výchozí 8080) pro sběr telemetrie (latence kamer, propustnost zpráv, chyby firewallu) do Promethea a Grafany. Vypněte, pokud observabilitu v síti nevyužíváte.
+                        </div>
+                    </div>
+
                     <!-- Hikvision Latency & Optimization Card -->
                     <div style="margin-bottom: 25px; padding: 16px; background: #0f172a; color: #f8fafc; border-radius: 8px; border-left: 4px solid #38bdf8; font-size: 0.9rem;">
                         <h4 style="margin: 0 0 10px 0; color: #38bdf8; font-size: 1rem;"><i class="fa fa-tachometer"></i> Doporučené nastavení Hikvision kamer pro minimální latenci (&lt; 10 ms)</h4>
@@ -893,99 +899,99 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         <button type="button" onclick="runDiagnosticTest('mqtt')" class="lox-btn-test" style="background: #0d9488;">📡 Test Spojení k MQTT Brokeru</button>
                     </div>
 
-                    <!-- Advanced Maintenance & Attachments -->
-                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🖼️ Správa Příloh & Čištění</h4>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 25px;">
-                        <div style="grid-column: 1 / -1;">
-                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-                                <input type="checkbox" name="save_attachments" <?php echo ($config['SAVE_ATTACHMENTS'] === "True" || $config['SAVE_ATTACHMENTS'] === true) ? 'checked' : ''; ?>>
-                                <span style="font-weight: 600; color: #334155;">Ukládat snímky detekce pohybu (obrázkové přílohy z kamer) do adresáře attachments</span>
-                            </label>
-                        </div>
-
-                        <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Auto-mazání starých příloh (dny):</label>
-                            <input type="number" name="cleanup_attachments_days" value="<?php echo htmlspecialchars($config['CLEANUP_ATTACHMENTS_DAYS']); ?>" required min="0" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
-                            <span class="field-hint">0 = nikdy nemazat. Výchozí: 30 dní.</span>
-                        </div>
-
-                        <div>
-                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Auto-mazání logů (dny):</label>
-                            <input type="number" name="cleanup_logs_days" value="<?php echo htmlspecialchars($config['CLEANUP_LOGS_DAYS']); ?>" required min="0" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
-                            <span class="field-hint">0 = nikdy nemazat. Výchozí: 30 dní.</span>
-                        </div>
-
+                    <!-- Maintenance & Retention -->
+                    <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">🖼️ Úroveň Logování & Údržba</h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px;">
                         <div>
                             <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Úroveň Logování (LoxBerry System LogLevel):</label>
-                            <?php $curr_ll = intval($lbpconfig['PLUGIN']['LOGLEVEL'] ?? 4); ?>
-                            <select name="plugin_loglevel" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; background: white;">
-                                <option value="7" <?php echo $curr_ll >= 7 ? 'selected' : ''; ?>>7 - DEBUG (Podrobné logování všeho)</option>
-                                <option value="6" <?php echo $curr_ll == 6 ? 'selected' : ''; ?>>6 - INFO (Běžné provozní události)</option>
-                                <option value="4" <?php echo $curr_ll == 4 ? 'selected' : ''; ?>>4 - WARNING (Pouze varování a chyby)</option>
-                                <option value="3" <?php echo $curr_ll <= 3 ? 'selected' : ''; ?>>3 - ERROR (Pouze kritické chyby)</option>
+                            <?php $current_loglevel = intval($lbpconfig['PLUGIN']['LOGLEVEL'] ?? $lbpconfig['SYSTEM']['LOGLEVEL'] ?? 4); ?>
+                            <select name="plugin_loglevel" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                                <option value="7" <?php echo ($current_loglevel >= 7) ? 'selected' : ''; ?>>7 - DEBUG (Detailní ladicí výpisy)</option>
+                                <option value="4" <?php echo ($current_loglevel == 4) ? 'selected' : ''; ?>>4 - INFO (Běžný provoz - výchozí)</option>
+                                <option value="1" <?php echo ($current_loglevel == 1) ? 'selected' : ''; ?>>1 - ERROR (Pouze chyby)</option>
+                                <option value="0" <?php echo ($current_loglevel == 0) ? 'selected' : ''; ?>>0 - OFF (Vypnuto)</option>
                             </select>
+                        </div>
+
+                        <div>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Retence Příloh (Dní):</label>
+                            <input type="number" name="cleanup_attachments_days" value="<?php echo htmlspecialchars($config['CLEANUP_ATTACHMENTS_DAYS']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                        </div>
+
+                        <div>
+                            <label style="display: block; font-weight: 600; margin-bottom: 5px; color: #334155; font-size: 0.9rem;">Retence Logů (Dní):</label>
+                            <input type="number" name="cleanup_logs_days" value="<?php echo htmlspecialchars($config['CLEANUP_LOGS_DAYS']); ?>" required style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         </div>
                     </div>
 
-                    <!-- Submit Button Footer -->
-                    <div style="margin-top: 30px; padding-top: 15px; border-top: 1px solid #e2e8f0; display: flex; gap: 15px; align-items: center;">
-                        <button type="submit" name="save_settings" class="lox-btn-primary">
-                            <?php echo htmlspecialchars($L['BTN_SAVE'] ?? '💾 Uložit Nastavení & Restartovat Službu'); ?>
-                        </button>
-                        <a href="?action=restart_daemon" class="lox-btn-secondary">
-                            <?php echo htmlspecialchars($L['BTN_RESTART_DAEMON'] ?? '🚀 Vynutit Restart Služby'); ?>
-                        </a>
+
+                    <div style="display: flex; gap: 25px; margin-top: 15px; align-items: center;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" name="save_attachments" <?php echo ($config['SAVE_ATTACHMENTS'] === "True" || $config['SAVE_ATTACHMENTS'] === true) ? 'checked' : ''; ?>>
+                            <span style="font-weight: 600; color: #334155;">Ukládat obrázkové přílohy z e-mailů</span>
+                        </label>
+
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" name="debug" <?php echo ($config['DEBUG'] === "True" || $config['DEBUG'] === true) ? 'checked' : ''; ?>>
+                            <span style="font-weight: 600; color: #334155;">Ladící režim (DEBUG)</span>
+                        </label>
+                    </div>
+
+                    <div style="margin-top: 25px; border-top: 1px solid #e2e8f0; padding-top: 15px; display: flex; gap: 15px; align-items: center;">
+                        <button type="submit" name="save_settings" class="lox-btn-primary">💾 Uložit Nastavení</button>
+                        <a href="?action=restart_daemon" class="lox-btn-secondary">🚀 Restartovat Službu</a>
                     </div>
                 </form>
             </div>
         </div>
 
     <?php elseif ($active_tab === 'dashboard'): ?>
-        <!-- Live Dashboard Tab -->
+        <!-- Live Dashboard & Packet Inspector -->
         <div class="lox-card">
             <div class="lox-card-header">
-                <h3 class="lox-card-title">📊 Live Inspektor SMTP relací & MQTT Zpráv</h3>
+                <h3 class="lox-card-title">📊 Živý Dashboard & Packet Inspector</h3>
                 <div style="display: flex; gap: 10px; align-items: center;">
-                    <span id="dash-last-update" style="font-size: 0.8rem; color: #64748b;">Není aktualizováno</span>
-                    <button type="button" onclick="refreshDashboardJSON()" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.82rem;">🔄 Obnovit</button>
+                    <span id="dash-last-update" style="font-size: 0.82rem; color: #64748b;"></span>
+                    <button onclick="refreshDashboardJSON()" class="lox-btn-secondary">🔄 Obnovit</button>
                 </div>
             </div>
-            <div class="lox-card-body">
-                <!-- Live Status Cards -->
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px;">
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px;">
-                        <span style="color: #64748b; font-size: 0.85rem; font-weight: 600;">Stav SMTP Serveru</span>
-                        <div id="dash-smtp-status" style="font-size: 1.2rem; font-weight: 700; color: #0284c7; margin-top: 4px;">Načítám...</div>
+            <div class="lox-card-body" id="dashboard-body">
+                <!-- Status Cards Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: #64748b;">📬 SMTP Server</div>
+                        <div style="font-size: 1.4rem; font-weight: 800;" id="dash-smtp-status">⏳ Načítání...</div>
                     </div>
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px;">
-                        <span style="color: #64748b; font-size: 0.85rem; font-weight: 600;">Stav MQTT Brokeru</span>
-                        <div id="dash-mqtt-status" style="font-size: 1.2rem; font-weight: 700; color: #0284c7; margin-top: 4px;">Načítám...</div>
+                    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: #64748b;">📡 MQTT Broker</div>
+                        <div style="font-size: 1.4rem; font-weight: 800;" id="dash-mqtt-status">⏳ Načítání...</div>
                     </div>
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px;">
-                        <span style="color: #64748b; font-size: 0.85rem; font-weight: 600;">Zpracováno Zpráv</span>
-                        <div id="dash-msg-count" style="font-size: 1.2rem; font-weight: 700; color: #166534; margin-top: 4px;">0</div>
+                    <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: #64748b;">⏱️ Uptime</div>
+                        <div style="font-size: 1.4rem; font-weight: 800; color: #0369a1;" id="dash-uptime">—</div>
                     </div>
-                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px;">
-                        <span style="color: #64748b; font-size: 0.85rem; font-weight: 600;">Doba Běhu (Uptime)</span>
-                        <div id="dash-uptime" style="font-size: 1.2rem; font-weight: 700; color: #334155; margin-top: 4px;">0s</div>
+                    <div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 16px;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: #64748b;">📨 Zpracováno zpráv</div>
+                        <div style="font-size: 1.4rem; font-weight: 800; color: #7e22ce;" id="dash-msg-count">0</div>
                     </div>
                 </div>
 
-                <!-- Recent Actions Table -->
-                <h4 style="margin: 0 0 12px 0; color: #1e293b;">📋 Poslední Zachycené Detekce & Triggery (Live)</h4>
+                <!-- Recent Events Table -->
+                <h4 style="margin: 0 0 12px 0; color: #2e7d32; font-size: 1rem; border-bottom: 2px solid #f1f8e9; padding-bottom: 6px;">📋 Poslední Zachycené Detekce & Paket Inspector</h4>
                 <div style="overflow-x: auto;">
-                    <table style="width: 100%; border-collapse: collapse; background: white; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
                         <thead>
-                            <tr style="background: #f8fafc; text-align: left; font-size: 0.85rem; color: #475569; border-bottom: 1px solid #e2e8f0;">
-                                <th style="padding: 10px 12px;">Čas</th>
-                                <th style="padding: 10px 12px;">Odesílatel (Kamera)</th>
-                                <th style="padding: 10px 12px;">MQTT Topic</th>
-                                <th style="padding: 10px 12px;">Payload</th>
-                                <th style="padding: 10px 12px;">Příloha / Stav</th>
+                            <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                                <th style="text-align: left; padding: 10px 12px;">Čas</th>
+                                <th style="text-align: left; padding: 10px 12px;">Typ</th>
+                                <th style="text-align: left; padding: 10px 12px;">Odesílatel (Kamera)</th>
+                                <th style="text-align: left; padding: 10px 12px;">MQTT Topic</th>
+                                <th style="text-align: left; padding: 10px 12px;">Payload</th>
+                                <th style="text-align: left; padding: 10px 12px;">Status</th>
                             </tr>
                         </thead>
-                        <tbody id="dash-actions-tbody">
-                            <tr><td colspan="5" style="padding: 20px; text-align: center; color: #94a3b8;">Načítám data z daemonu...</td></tr>
+                        <tbody id="dash-events-tbody">
+                            <tr><td colspan="6" style="text-align: center; padding: 20px; color: #94a3b8;">⏳ Načítání stavu zpráv...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -993,69 +999,70 @@ $active_tab = $_GET['tab'] ?? 'settings';
         </div>
 
     <?php elseif ($active_tab === 'logs'): ?>
-        <!-- Log Viewer Tab -->
+        <!-- Smart Log Viewer -->
         <div class="lox-card">
             <div class="lox-card-header">
-                <h3 class="lox-card-title">📋 Prohlížeč systémového logu smtp2mqtt</h3>
-                <div style="display: flex; gap: 10px;">
-                    <a href="?action=download_log" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.82rem;">📥 Stáhnout Soubor Logu</a>
-                    <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit obsah logu?');" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.82rem; color: #b91c1c;">🧹 Vyčistit Log</a>
+                <h3 class="lox-card-title">📋 Prohlížeč Logů</h3>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <a href="/admin/system/logmanager.cgi?package=smtp2mqtt" target="_blank" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; background: #0284c7; color: #ffffff; text-decoration: none;">📋 LoxBerry Log Manager</a>
+                    <a href="/admin/system/tools/logfile.cgi?logfile=plugins/smtp2mqtt/smtp2mqtt.log&header=html&format=template" target="_blank" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; background: #0d9488; color: #ffffff; text-decoration: none;">🔍 LoxBerry Log Viewer</a>
+                    <input type="text" id="log-search" oninput="filterLogLines()" placeholder="🔍 Hledat v logu..." style="padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem;">
+                    <button onclick="setLogLevelFilter('ALL')" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">Vše</button>
+                    <button onclick="setLogLevelFilter('ERROR')" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #dc2626;">🔴 Chyby</button>
+                    <button onclick="setLogLevelFilter('WARN')" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #d97706;">🟡 Varování</button>
+                    <button onclick="copyLogToClipboard()" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">📋 Kopírovat</button>
+                    <a href="/admin/system/logmanager.php?package=smtp2mqtt" target="_blank" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; background: #e0f2fe; color: #0369a1; border-color: #7dd3fc; text-decoration: none;">🔍 Otevřít v LoxBerry Log Manageru</a>
+                    <a href="?action=download_log" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem;">📥 Stáhnout</a>
+                    <a href="?action=clear_log" onclick="return confirm('Opravdu chcete vyčistit soubor logů?');" class="lox-btn-secondary" style="padding: 5px 10px; font-size: 0.8rem; color: #dc2626;">🧹 Vyčistit</a>
                 </div>
+
             </div>
             <div class="lox-card-body">
-                <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                    <span style="font-size: 0.85rem; color: #64748b;">Zobrazen aktuální soubor: <code><?php echo htmlspecialchars($log_file); ?></code></span>
-                    <div style="display: flex; gap: 8px;">
-                        <button type="button" onclick="copyLogToClipboard()" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.82rem;">📋 Zkopírovat Log</button>
-                        <a href="/admin/system/logmanager.php?package=smtp2mqtt" target="_blank" class="lox-btn-secondary" style="padding: 4px 10px; font-size: 0.82rem; background: #e0f2fe; color: #0369a1; border-color: #7dd3fc; text-decoration: none;">🔍 Otevřít v LoxBerry Log Manageru</a>
-                    </div>
-                </div>
-                <div id="log-box" class="log-viewer-box"><?php
-                    if (file_exists($log_file) && filesize($log_file) > 0) {
-                        $lines = file($log_file);
-                        $recent_lines = array_slice($lines, -300);
-                        foreach ($recent_lines as $line) {
-                            $escaped = htmlspecialchars($line);
-                            if (strpos($line, 'ERROR') !== false || strpos($line, 'CRITICAL') !== false) {
-                                echo "<span class='log-line-error'>{$escaped}</span>";
-                            } elseif (strpos($line, 'WARNING') !== false) {
-                                echo "<span class='log-line-warn'>{$escaped}</span>";
-                            } elseif (strpos($line, 'DEBUG') !== false) {
-                                echo "<span class='log-line-debug'>{$escaped}</span>";
-                            } else {
-                                echo "<span class='log-line-info'>{$escaped}</span>";
-                            }
-                        }
-                    } else {
-                        echo "Soubor logu je zatím prázdný nebo nebyl vytvořen. Cesta: " . htmlspecialchars($log_file);
+                <?php
+                if (file_exists($log_file) && filesize($log_file) > 0) {
+                    $lines = file($log_file);
+                    echo '<div class="log-viewer-box" id="log-box">';
+                    foreach ($lines as $line) {
+                        $cls = 'log-line-info';
+                        if (strpos($line, 'ERROR') !== false) $cls = 'log-line-error';
+                        elseif (strpos($line, 'WARN') !== false) $cls = 'log-line-warn';
+                        elseif (strpos($line, 'DEBUG') !== false) $cls = 'log-line-debug';
+                        echo '<div class="log-item ' . $cls . '">' . htmlspecialchars($line) . '</div>';
                     }
-                ?></div>
+                    echo '</div>';
+                } else {
+                    echo '<div class="log-viewer-box" id="log-box">Log soubor je zatím prázdný.</div>';
+                }
+                ?>
             </div>
         </div>
 
     <?php elseif ($active_tab === 'help'): ?>
-        <!-- Help Tab -->
+        <!-- Zero GitHub Dependency - Inline Interactive Help -->
         <div class="lox-card">
             <div class="lox-card-header">
-                <h3 class="lox-card-title">📖 Nápověda & Nastavení Kamer pro minimální latenci</h3>
+                <h3 class="lox-card-title">📖 Nápověda, Nastavení Kamer & Loxone Generator</h3>
             </div>
-            <div class="lox-card-body" style="color: #334155; line-height: 1.6;">
-                <p>Plugin <strong>smtp2mqtt</strong> přijímá e-mailové notifikace o detekci pohybu z IP kamer a okamžitě posílá MQTT zprávy do Loxone.</p>
+            <div class="lox-card-body" style="line-height: 1.6; color: #334155;">
                 
-                <h4 style="color: #2e7d32; margin-top: 20px;">🎥 Nastavení jednotlivých značek kamer</h4>
+                <p style="background: #f0fdf4; border-left: 4px solid #16a34a; padding: 14px 18px; border-radius: 6px; font-size: 0.95rem; margin-top: 0;">
+                    <strong>Jak funguje smtp2mqtt:</strong> Plugin spouští na LoxBerry vestavěný SMTP server (port 1025). Jakákoliv IP kamera v LAN mu při detekci pohybu pošle e-mail. Plugin e-mail okamžitě převede na <strong>MQTT zprávu</strong> pro Loxone a automaticky spustí auto-reset časovač.
+                </p>
+
+                <!-- Camera Setup Accordion -->
+                <h4 style="color: #2e7d32; margin-top: 25px;">🎥 Přesné Návody Nastavení Kamer</h4>
                 
                 <div class="accordion-item">
-                    <div class="accordion-header" onclick="toggleAccordion('acc-hik')">
-                        <span>🔴 Hikvision / HiLook / Ezviz (Doporučeno)</span> <span>▼</span>
+                    <div class="accordion-header" onclick="toggleAccordion('acc-hikvision')">
+                        <span>🔴 Hikvision / HiLook / Ezviz</span> <span>▼</span>
                     </div>
-                    <div class="accordion-body" id="acc-hik" style="display: block;">
+                    <div class="accordion-body" id="acc-hikvision">
                         <ol style="padding-left: 20px; line-height: 1.8;">
-                            <li>Přihlaste se do kamery: <strong>Configuration -> Network -> Advanced Settings -> Email</strong>.</li>
-                            <li><strong>Server Authentication:</strong> Vypnout (OFF).</li>
-                            <li><strong>SMTP Server:</strong> Zadejte přímo IP adresu LoxBerry (např. <code>10.0.20.100</code>). <em>Nepoužívejte doménový název.</em></li>
-                            <li><strong>SMTP Port:</strong> <code>1025</code>.</li>
-                            <li><strong>Sender / Sender Address:</strong> <code>kamera.vchod@domov.local</code>. Z této adresy vznikne MQTT topic <code>smtp2mqtt/kamera_vchod-domov_local</code>.</li>
-                            <li><strong>Attached Image (Fotka v příloze):</strong> Vypněte pro dosažení nejvyšší rychlosti (&lt; 10 ms).</li>
+                            <li>Otevřete webové rozhraní kamery: <strong>Configuration -> Network -> Advanced Settings -> Email</strong>.</li>
+                            <li><strong>SMTP Server:</strong> Zadejte IP adresu vašeho LoxBerry (např. <code>192.168.1.100</code>).</li>
+                            <li><strong>SMTP Port:</strong> Zadejte <code>1025</code> (nebo port dle vašich nastavení).</li>
+                            <li><strong>Authentication & SSL:</strong> Vypněte SSL/TLS i autentizaci (login/heslo zůstanou prázdné).</li>
+                            <li><strong>Sender Address:</strong> Zadejte např. <code>kamera.zahrada@domov.local</code>. Z této adresy se automaticky vytvoří MQTT topic <code>smtp2mqtt/kamera_zahrada-domov_local</code>.</li>
                         </ol>
                     </div>
                 </div>
@@ -1089,13 +1096,26 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <label style="font-weight: 600; display: block; margin-bottom: 6px;">Zadejte e-mail odesílatele kamery:</label>
                     <input type="text" id="gen-email-input" value="kamera.zahrada@domov.local" oninput="generateLoxoneConfigTopic()" style="width: 100%; max-width: 400px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                     
-                    <div style="margin-top: 12px;">
-                        <span style="font-size: 0.85rem; color: #64748b; font-weight: 600;">Výsledný MQTT Subscriptions Topic pro Loxone Config:</span>
-                        <div id="gen-topic-result" style="font-family: monospace; font-size: 1.1rem; font-weight: 700; color: #0284c7; margin-top: 4px; background: white; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 4px; display: inline-block;">
-                            smtp2mqtt/kamera_zahrada-domov_local
-                        </div>
+                    <div style="margin-top: 12px; background: #ffffff; padding: 12px; border: 1px dashed #6fb738; border-radius: 4px;">
+                        <strong>MQTT Text In Subscription pro Loxone Config:</strong>
+                        <div id="gen-topic-result" style="font-family: monospace; color: #15803d; font-weight: 700; margin-top: 4px; font-size: 1.05rem;">smtp2mqtt/kamera_zahrada-domov_local</div>
                     </div>
                 </div>
+
+                <!-- Support & Buy Me a Coffee -->
+                <div style="margin-top: 30px; background: linear-gradient(135deg, #fef3c7 0%, #fff7ed 100%); border: 1px solid #fde68a; padding: 20px; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+                    <div>
+                        <h4 style="margin: 0 0 6px 0; color: #78350f;">☕ Podpořte vývoj projektu smtp2mqtt</h4>
+                        <p style="margin: 0; color: #92400e; font-size: 0.9rem;">
+                            Tento plugin vyvíjí jako volnočasový open-source projekt <strong>Ondřej Hála</strong> (<a href="mailto:ondrejhala@gmail.com" style="color: #b45309; text-decoration: underline;">ondrejhala@gmail.com</a>).
+                            Pokud vám plugin šetří čas nebo zjednodušil chytrý domov, můžete vývoj podpořit kávou!
+                        </p>
+                    </div>
+                    <a href="https://buymeacoffee.com/ondrejhala8" target="_blank" style="background: #ffdd00; color: #000000; font-weight: 700; padding: 10px 18px; border-radius: 8px; text-decoration: none; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: inline-flex; align-items: center; gap: 8px; font-size: 0.95rem;">
+                        <span>☕ Buy Me A Coffee</span>
+                    </a>
+                </div>
+
             </div>
         </div>
     <?php endif; ?>
@@ -1326,61 +1346,62 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 const updateEl = document.getElementById('dash-last-update');
                 if (updateEl) updateEl.textContent = 'Aktualizováno: ' + new Date().toLocaleTimeString('cs-CZ');
 
-                if (data.status) {
-                    const smtpEl = document.getElementById('dash-smtp-status');
-                    if (smtpEl) {
-                        smtpEl.textContent = data.status.smtp_connected ? '🟢 Aktivní (port ' + data.status.smtp_port + ')' : '🔴 Neaktivní';
-                        smtpEl.style.color = data.status.smtp_connected ? '#166534' : '#b91c1c';
-                    }
-                    const mqttEl = document.getElementById('dash-mqtt-status');
-                    if (mqttEl) {
-                        mqttEl.textContent = data.status.mqtt_connected ? '🟢 Připojeno' : '🔴 Odpojeno';
-                        mqttEl.style.color = data.status.mqtt_connected ? '#166534' : '#b91c1c';
-                    }
-                    const cntEl = document.getElementById('dash-msg-count');
-                    if (cntEl) cntEl.textContent = data.status.processed_messages_count || 0;
+                const smtpEl = document.getElementById('dash-smtp-status');
+                if (smtpEl) {
+                    smtpEl.textContent = data.status?.smtp_connected ? '🟢 Active' : '🔴 Inactive';
+                    smtpEl.style.color = data.status?.smtp_connected ? '#15803d' : '#b91c1c';
+                }
 
-                    const uptEl = document.getElementById('dash-uptime');
-                    if (uptEl) uptEl.textContent = data.status.uptime_formatted || '0s';
+                const mqttEl = document.getElementById('dash-mqtt-status');
+                if (mqttEl) {
+                    mqttEl.textContent = data.status?.mqtt_connected ? '🟢 Connected' : '🔴 Disconnected';
+                    mqttEl.style.color = data.status?.mqtt_connected ? '#15803d' : '#b91c1c';
+                }
 
-                    // Actions table rendering
-                    const tbody = document.getElementById('dash-actions-tbody');
-                    if (tbody && data.status.recent_actions) {
-                        if (data.status.recent_actions.length === 0) {
-                            tbody.innerHTML = '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #94a3b8;">Zatím nebyly zaznamenány žádné detekce.</td></tr>';
-                        } else {
-                            tbody.innerHTML = '';
-                            data.status.recent_actions.forEach(act => {
-                                const tr = document.createElement('tr');
-                                tr.style.borderBottom = '1px solid #f1f5f9';
-                                let badge = act.status === 'SUCCESS' 
-                                    ? '<span class="lox-badge-success">OK / Triggery</span>' 
-                                    : (act.status === 'BLOCKED' ? '<span class="lox-badge-danger">🔒 BLOCKED (Odmítnuto)</span>' : '<span class="lox-badge-danger">CHYBA</span>');
-                                
-                                let icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : 'ℹ️'));
-                                let label = act.event_label || act.type || '';
-                                let targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${escapeHtml(act.event_details.target_type)}</span>` : '';
-                                let eventBadge = `<div style="margin-bottom: 4px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${escapeHtml(label)}</strong>${targetStr}</span></div>`;
+                const uptimeEl = document.getElementById('dash-uptime');
+                if (uptimeEl) uptimeEl.textContent = data.status?.uptime_formatted || '—';
 
-                                tr.innerHTML = `
-                                    <td style="padding: 10px 12px; font-size: 0.85rem; color: #64748b;">${escapeHtml(act.timestamp)}</td>
-                                    <td style="padding: 10px 12px; font-weight: 600; color: #1e293b;">${escapeHtml(act.sender)}</td>
-                                    <td style="padding: 10px 12px; font-family: monospace; font-size: 0.85rem; color: #0284c7;">${escapeHtml(act.topic)}</td>
-                                    <td style="padding: 10px 12px;">${eventBadge}<code>${escapeHtml(act.payload)}</code></td>
-                                    <td style="padding: 10px 12px;">${badge}${attHtml}</td>
-                                `;
-                                tbody.appendChild(tr);
-                            });
-                        }
+                const msgEl = document.getElementById('dash-msg-count');
+                if (msgEl) msgEl.textContent = data.status?.processed_messages_count || '0';
+
+                const tbody = document.getElementById('dash-events-tbody');
+                if (tbody && data.status?.recent_actions) {
+                    if (data.status.recent_actions.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #94a3b8;">Zatím nebyly zaznamenány žádné události.</td></tr>';
+                    } else {
+                        tbody.innerHTML = data.status.recent_actions.map(act => {
+                            const icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : (act.type === 'system' ? '⚙️' : 'ℹ️')));
+                            const label = act.event_label || act.type || '';
+                            const senderDisplay = act.sender ? act.sender : 'system';
+                            const targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${act.event_details.target_type}</span>` : '';
+                            return `
+                            <tr style="border-bottom: 1px solid #f1f5f9;">
+                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.82rem;">${act.timestamp || ''}</td>
+                                <td style="padding: 8px 12px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${label}</strong>${targetStr}</span></td>
+                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;">${senderDisplay}</td>
+                                <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem; color: #0369a1;">${act.topic || ''}</td>
+                                <td style="padding: 8px 12px; font-weight: 600;">${act.payload || ''}</td>
+                                <td style="padding: 8px 12px;"><span class="${act.status === 'SUCCESS' ? 'lox-badge-success' : 'lox-badge-danger'}">${act.status || ''}</span></td>
+                            </tr>
+                        `}).join('');
                     }
                 }
             })
             .catch(() => {});
     }
 
-    function filterLogViewer(level) {
-        const lines = document.querySelectorAll('#log-box span');
-        lines.forEach(item => {
+    function filterLogLines() {
+        const search = document.getElementById('log-search')?.value.toLowerCase();
+        const items = document.querySelectorAll('#log-box .log-item');
+        items.forEach(item => {
+            const txt = item.textContent.toLowerCase();
+            item.style.display = txt.includes(search) ? 'block' : 'none';
+        });
+    }
+
+    function setLogLevelFilter(level) {
+        const items = document.querySelectorAll('#log-box .log-item');
+        items.forEach(item => {
             if (level === 'ALL') {
                 item.style.display = 'block';
             } else {
@@ -1426,4 +1447,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
     });
 
 </script>
-<?php LBWeb::lbfooter(); ?>
+
+<?php
+LBWeb::lbfooter();
+?>

@@ -34,7 +34,7 @@ def test_installer_upgrade_lifecycle_preserves_config():
         tempfolder = os.path.join(tmp_dir, "install_extract_12345")
         pname = "smtp2mqtt"
         pfolder = "smtp2mqtt"
-        pversion = "1.8.27"
+        pversion = "2.0.1"
         lbhomedir = os.path.join(tmp_dir, "opt_loxberry")
 
         config_dir = os.path.join(lbhomedir, "config", "plugins", pfolder)

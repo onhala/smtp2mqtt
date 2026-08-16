@@ -1,0 +1,220 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Stav SMTP2MQTT Služby",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_up",
+          "legendFormat": "Service"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "DOWN", "color": "red" },
+                "1": { "text": "ONLINE", "color": "green" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "title": "MQTT Broker Spojení",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_mqtt_connected",
+          "legendFormat": "MQTT"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "DISCONNECTED", "color": "red" },
+                "1": { "text": "CONNECTED", "color": "green" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "title": "SMTP Listener (Port 1025)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 0 },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_smtp_listener_active",
+          "legendFormat": "SMTP"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "INACTIVE", "color": "red" },
+                "1": { "text": "LISTENING", "color": "green" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Zpracováno e-mailů",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 0 },
+      "id": 4,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_processed_messages_total",
+          "legendFormat": "Zprávy"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Aktivní Auto-Reset Časovače",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 0 },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_active_reset_timers",
+          "legendFormat": "Časovače"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Reakční Latence Brány & Časový posun kamer",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 6,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_trigger_duration_seconds * 1000",
+          "legendFormat": "Reálná Latence Triggeru (ms) - {{camera}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_camera_to_mqtt_latency_seconds",
+          "legendFormat": "Clock Skew / Textový posun hodin (s) - {{camera}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "showPoints": "auto"
+          }
+        }
+      }
+    },
+    {
+      "title": "Frekvence Bezpečnostních Detekcí (zprávy/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 7,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "sum(rate(smtp2mqtt_events_detected_total[5m])) by (camera, event_type, target) * 60",
+          "legendFormat": "{{camera}} ({{event_type}} - {{target}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 50
+          }
+        }
+      }
+    },
+    {
+      "title": "Zablokované pokusy v síti (Firewall ALLOWED_IPS)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 12 },
+      "id": 8,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "smtp2mqtt_firewall_rejected_total",
+          "legendFormat": "IP: {{ip}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "fixedColor": "red", "mode": "fixed" }
+        }
+      }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["loxberry", "smtp2mqtt", "hikvision", "smart-home", "prometheus", "cameras"],
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"]
+  },
+  "timezone": "browser",
+  "title": "SMTP2MQTT Gateway & Camera Telemetry",
+  "uid": "smtp2mqtt-loxberry-telemetry"
+}
