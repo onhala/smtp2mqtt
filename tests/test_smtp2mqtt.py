@@ -2258,6 +2258,35 @@ def test_cancel_all_resets_flushes_active_topics():
     loop.close()
 
 
+def test_is_isapi_event_permitted_filtering():
+    """Verify event filtering modes for ISAPI stream events."""
+    # 1. Mode: all
+    assert smtp2mqtt.is_isapi_event_permitted("motion", "unknown", "all") is True
+    assert smtp2mqtt.is_isapi_event_permitted("line_crossing", "unknown", "all") is True
+
+    # 2. Mode: smart_or_acusense (default)
+    # Raw motion with no target -> filtered out
+    assert smtp2mqtt.is_isapi_event_permitted("motion", "unknown", "smart_or_acusense") is False
+    # Raw motion with human -> permitted
+    assert smtp2mqtt.is_isapi_event_permitted("motion", "human", "smart_or_acusense") is True
+    # Raw motion with vehicle -> permitted
+    assert smtp2mqtt.is_isapi_event_permitted("motion", "vehicle", "smart_or_acusense") is True
+    # Smart events -> always permitted
+    assert smtp2mqtt.is_isapi_event_permitted("line_crossing", "unknown", "smart_or_acusense") is True
+    assert smtp2mqtt.is_isapi_event_permitted("intrusion", "unknown", "smart_or_acusense") is True
+
+    # 3. Mode: acusense_only
+    assert smtp2mqtt.is_isapi_event_permitted("motion", "human", "acusense_only") is True
+    assert smtp2mqtt.is_isapi_event_permitted("motion", "unknown", "acusense_only") is False
+    assert smtp2mqtt.is_isapi_event_permitted("line_crossing", "unknown", "acusense_only") is False
+
+    # 4. Mode: smart_only
+    assert smtp2mqtt.is_isapi_event_permitted("line_crossing", "unknown", "smart_only") is True
+    assert smtp2mqtt.is_isapi_event_permitted("intrusion", "unknown", "smart_only") is True
+    assert smtp2mqtt.is_isapi_event_permitted("motion", "human", "smart_only") is False
+
+
+
 
 
 

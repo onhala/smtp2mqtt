@@ -106,6 +106,7 @@ defaults: Dict[str, Union[str, int]] = {
     "ISAPI_CAMERAS": "",
     "ISAPI_USER": "admin",
     "ISAPI_PASSWORD": "",
+    "ISAPI_FILTER_MODE": "smart_or_acusense",
 }
 
 def parse_bool(value: Any) -> bool:
@@ -533,6 +534,37 @@ def parse_hikvision_isapi_alert(xml_str: str) -> Dict[str, Any]:
         log.debug("Error parsing ISAPI alert XML: %s", e)
 
     return info
+
+
+def is_isapi_event_permitted(event_type: str, target_type: str, filter_mode: str = "smart_or_acusense") -> bool:
+    """Evaluates whether an ISAPI alert event matches the user-configured filter rule."""
+    filter_mode = (filter_mode or "smart_or_acusense").strip().lower()
+    
+    if filter_mode in ("all", "none", "*", "off"):
+        return True
+
+    # Smart event types
+    is_smart = event_type in (
+        "line_crossing", "intrusion", "region_entrance", "region_exiting",
+        "face", "loitering", "unattended_baggage", "object_removal"
+    )
+    is_acusense_target = target_type in ("human", "vehicle")
+
+    if filter_mode == "acusense_only":
+        # Strictly require human or vehicle classification
+        return is_acusense_target
+
+    if filter_mode == "smart_only":
+        # Strictly require smart event types
+        return is_smart
+
+    if filter_mode == "smart_or_acusense":
+        # Allow any smart event, OR basic motion if confirmed human/vehicle
+        if is_smart or is_acusense_target:
+            return True
+        return False
+
+    return True
 
 
 def probe_camera_isapi(ip: str, port: int = 80, user: str = "admin", pwd: str = "") -> Dict[str, Any]:
@@ -1518,15 +1550,23 @@ class smtp2mqttHandler:
                         
                         alert_info = parse_hikvision_isapi_alert(xml_content)
                         if alert_info.get("event_state") != "inactive":
+                            ev_type = alert_info.get("event_type", "motion")
+                            tg_type = alert_info.get("target_type", "unknown")
+                            filter_mode = str(config.get("ISAPI_FILTER_MODE", "smart_or_acusense"))
+
+                            if not is_isapi_event_permitted(ev_type, tg_type, filter_mode):
+                                log.debug("[%s] Filtered out ISAPI event '%s' (target: %s) by filter_mode '%s'", sender, ev_type, tg_type, filter_mode)
+                                continue
+
                             self.isapi_status[sender]["events_count"] = self.isapi_status[sender].get("events_count", 0) + 1
                             self.isapi_status[sender]["last_event_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            self.isapi_status[sender]["last_event_type"] = alert_info.get("event_type")
+                            self.isapi_status[sender]["last_event_type"] = ev_type
                             
                             asyncio.run_coroutine_threadsafe(
                                 self.trigger_camera_event(
                                     sender=sender,
-                                    event_type=alert_info.get("event_type", "motion"),
-                                    target_type=alert_info.get("target_type", "unknown"),
+                                    event_type=ev_type,
+                                    target_type=tg_type,
                                     details=alert_info,
                                     source="isapi"
                                 ),

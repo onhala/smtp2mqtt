@@ -84,7 +84,8 @@ $defaults = [
     "ENABLE_ISAPI" => "False",
     "ISAPI_CAMERAS" => "",
     "ISAPI_USER" => "admin",
-    "ISAPI_PASSWORD" => ""
+    "ISAPI_PASSWORD" => "",
+    "ISAPI_FILTER_MODE" => "smart_or_acusense"
 ];
 
 // Try reading LoxBerry MQTT Gateway defaults if available
@@ -449,6 +450,10 @@ if (isset($_GET['action'])) {
                 'success' => false,
                 'message' => "❌ MQTT Broker na {$mqtt_host}:{$mqtt_port} odmítl spojení (Kód odmítnutí: {$rc})."
             ]);
+        }
+        exit;
+    }
+
     if ($act === 'reset_all_mqtt') {
         header('Content-Type: application/json; charset=utf-8');
         $web_port = intval($config['WEB_PORT'] ?? 8080);
@@ -564,6 +569,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         if (isset($_POST['isapi_password']) && $_POST['isapi_password'] !== '') {
             $config['ISAPI_PASSWORD'] = $_POST['isapi_password'];
         }
+        $config['ISAPI_FILTER_MODE'] = trim($_POST['isapi_filter_mode'] ?? 'smart_or_acusense');
 
         if (isset($_POST['isapi_cam_ip']) && is_array($_POST['isapi_cam_ip'])) {
             $cam_list = [];
@@ -1056,7 +1062,7 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         </div>
 
                         <div id="isapi-panel-body">
-                            <!-- Global Default Credentials -->
+                            <!-- Global Default Credentials & Smart Filter -->
                             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px; background: white; padding: 12px 14px; border-radius: 6px; border: 1px solid #cbd5e1;">
                                 <div>
                                     <label style="display: block; font-weight: 600; margin-bottom: 4px; color: #334155; font-size: 0.88rem;">Výchozí ISAPI Uživatel:</label>
@@ -1065,6 +1071,18 @@ $active_tab = $_GET['tab'] ?? 'settings';
                                 <div>
                                     <label style="display: block; font-weight: 600; margin-bottom: 4px; color: #334155; font-size: 0.88rem;">Výchozí ISAPI Heslo (Digest Auth):</label>
                                     <input type="password" name="isapi_password" id="isapi_password" value="<?php echo htmlspecialchars($config['ISAPI_PASSWORD'] ?? ''); ?>" placeholder="••••••••" style="width: 100%; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.88rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display: block; font-weight: 600; margin-bottom: 4px; color: #15803d; font-size: 0.88rem;">🛡️ Filtr Událostí ISAPI (Eliminace falešných nočních detekcí &amp; šumu):</label>
+                                    <select name="isapi_filter_mode" style="width: 100%; padding: 7px; border: 1px solid #86efac; border-radius: 4px; font-size: 0.88rem; background: #f0fdf4; font-weight: 600; color: #166534;">
+                                        <option value="smart_or_acusense" <?php echo (($config['ISAPI_FILTER_MODE'] ?? 'smart_or_acusense') === 'smart_or_acusense') ? 'selected' : ''; ?>>🛡️ Chytrý filtr (Smart Events + Human/Vehicle AcuSense) — DOPORUČENO</option>
+                                        <option value="acusense_only" <?php echo (($config['ISAPI_FILTER_MODE'] ?? '') === 'acusense_only') ? 'selected' : ''; ?>>🚶 Pouze Člověk / Vozidlo (Striktní AcuSense)</option>
+                                        <option value="smart_only" <?php echo (($config['ISAPI_FILTER_MODE'] ?? '') === 'smart_only') ? 'selected' : ''; ?>>📐 Pouze Smart Události (Line Crossing, Intrusion)</option>
+                                        <option value="all" <?php echo (($config['ISAPI_FILTER_MODE'] ?? '') === 'all') ? 'selected' : ''; ?>>🌐 Všechny události (Včetně surového pixelového VMD šumu)</option>
+                                    </select>
+                                    <small style="color: #64748b; font-size: 0.76rem; display: block; margin-top: 3px;">
+                                        Ignoruje falešné noční sepnutí z pixelového šumu senzoru, deště, pavučin nebo hmyzu, pokud kamera nepotvrdí postavu člověka, vozidlo nebo Smart zónu.
+                                    </small>
                                 </div>
                             </div>
 
