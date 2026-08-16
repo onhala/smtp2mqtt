@@ -80,7 +80,11 @@ $defaults = [
     "SAVE_ATTACHMENTS" => "True",
     "CLEANUP_ATTACHMENTS_DAYS" => 30,
     "CLEANUP_LOGS_DAYS" => 30,
-    "DEBUG" => "False"
+    "DEBUG" => "False",
+    "ENABLE_ISAPI" => "False",
+    "ISAPI_CAMERAS" => "",
+    "ISAPI_USER" => "admin",
+    "ISAPI_PASSWORD" => ""
 ];
 
 // Try reading LoxBerry MQTT Gateway defaults if available
@@ -171,6 +175,103 @@ if (!isset($config['FIREWALL_RULES']) || !is_array($config['FIREWALL_RULES'])) {
         }
     }
     $config['FIREWALL_RULES'] = $rules;
+}
+
+$isapi_cameras_list = [];
+if (!empty($config['ISAPI_CAMERAS'])) {
+    if (is_array($config['ISAPI_CAMERAS'])) {
+        $isapi_cameras_list = $config['ISAPI_CAMERAS'];
+    } else {
+        $decoded = json_decode($config['ISAPI_CAMERAS'], true);
+        if (is_array($decoded)) {
+            $isapi_cameras_list = $decoded;
+        } else {
+            foreach (explode(',', strval($config['ISAPI_CAMERAS'])) as $entry) {
+                $entry = trim($entry);
+                if (empty($entry)) continue;
+                $parts = explode(':', $entry);
+                if (count($parts) === 1) {
+                    $isapi_cameras_list[] = ['ip' => $parts[0], 'port' => 80, 'sender' => 'cam_' . $parts[0]];
+                } else if (count($parts) === 2) {
+                    if (is_numeric($parts[1])) {
+                        $isapi_cameras_list[] = ['ip' => $parts[0], 'port' => intval($parts[1]), 'sender' => 'cam_' . $parts[0]];
+                    } else {
+                        $isapi_cameras_list[] = ['ip' => $parts[0], 'port' => 80, 'sender' => $parts[1]];
+                    }
+                } else {
+                    $isapi_cameras_list[] = ['ip' => $parts[0], 'port' => intval($parts[1]), 'sender' => $parts[2]];
+                }
+            }
+        }
+    }
+}
+
+// Handle Clean AJAX Probe Camera Endpoint
+if (isset($_GET['_ajax']) && $_GET['_ajax'] === 'probe_camera') {
+    header('Content-Type: application/json; charset=utf-8');
+    $ip = trim($_GET['ip'] ?? '');
+    $port = intval($_GET['port'] ?? 80);
+    $user = trim($_GET['user'] ?? ($config['ISAPI_USER'] ?? 'admin'));
+    $pass = $_GET['password'] ?? ($_GET['pwd'] ?? ($config['ISAPI_PASSWORD'] ?? ''));
+
+    if (empty($ip)) {
+        echo json_encode(['success' => false, 'error' => 'Chybí IP adresa']);
+        exit;
+    }
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, "http://{$ip}:{$port}/ISAPI/System/deviceInfo");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
+        curl_setopt($ch, CURLOPT_USERPWD, "{$user}:{$pass}");
+        curl_setopt($ch, CURLOPT_TIMEOUT, 4);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3);
+        
+        $start_t = microtime(true);
+        $response = curl_exec($ch);
+        $lat_ms = intval((microtime(true) - $start_t) * 1000);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curl_err = curl_error($ch);
+        curl_close($ch);
+
+        if ($http_code === 200 && !empty($response)) {
+            $dev_name = "";
+            $model = "";
+            $fw = "";
+            if (preg_match('/<deviceName>([^<]+)<\/deviceName>/i', $response, $m)) $dev_name = trim($m[1]);
+            if (preg_match('/<model>([^<]+)<\/model>/i', $response, $m)) $model = trim($m[1]);
+            if (preg_match('/<firmwareVersion>([^<]+)<\/firmwareVersion>/i', $response, $m)) $fw = trim($m[1]);
+
+            echo json_encode([
+                'success' => true,
+                'status_code' => 200,
+                'latency_ms' => $lat_ms,
+                'device_name' => $dev_name,
+                'model' => $model,
+                'firmware' => $fw,
+                'message' => "Připojeno (" . ($model ?: ($dev_name ?: 'Hikvision')) . ", FW: {$fw}, {$lat_ms}ms)"
+            ]);
+        } else if ($http_code === 401) {
+            echo json_encode([
+                'success' => false,
+                'status_code' => 401,
+                'latency_ms' => $lat_ms,
+                'error' => 'Chyba ověření (401 Unauthorized) - Zkontrolujte jméno a heslo'
+            ]);
+        } else {
+            $err = !empty($curl_err) ? $curl_err : "HTTP Chyba {$http_code}";
+            echo json_encode([
+                'success' => false,
+                'status_code' => $http_code,
+                'latency_ms' => $lat_ms,
+                'error' => $err
+            ]);
+        }
+    } else {
+        echo json_encode(['success' => false, 'error' => 'PHP cURL modul není k dispozici']);
+    }
+    exit;
 }
 
 // Handle Clean AJAX JSON Endpoint
@@ -437,6 +538,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_settings'])) {
         $config['SAVE_ATTACHMENTS'] = isset($_POST['save_attachments']) ? "True" : "False";
         $config['CLEANUP_ATTACHMENTS_DAYS'] = intval($_POST['cleanup_attachments_days'] ?? 30);
         $config['CLEANUP_LOGS_DAYS'] = intval($_POST['cleanup_logs_days'] ?? 30);
+
+        $config['ENABLE_ISAPI'] = isset($_POST['enable_isapi']) ? "True" : "False";
+        $config['ISAPI_USER'] = trim($_POST['isapi_user'] ?? 'admin');
+        if (isset($_POST['isapi_password']) && $_POST['isapi_password'] !== '') {
+            $config['ISAPI_PASSWORD'] = $_POST['isapi_password'];
+        }
+
+        if (isset($_POST['isapi_cam_ip']) && is_array($_POST['isapi_cam_ip'])) {
+            $cam_list = [];
+            $cam_ips = $_POST['isapi_cam_ip'];
+            $cam_senders = $_POST['isapi_cam_sender'] ?? [];
+            $cam_ports = $_POST['isapi_cam_port'] ?? [];
+            $cam_users = $_POST['isapi_cam_user'] ?? [];
+            $cam_passwords = $_POST['isapi_cam_password'] ?? [];
+
+            for ($i = 0; $i < count($cam_ips); $i++) {
+                $cip = trim($cam_ips[$i]);
+                $csender = trim($cam_senders[$i] ?? '');
+                $cport = intval($cam_ports[$i] ?? 80);
+                $cuser = trim($cam_users[$i] ?? '');
+                $cpass = $cam_passwords[$i] ?? '';
+
+                if (!empty($cip)) {
+                    if (empty($csender)) $csender = "cam_" . $cip;
+                    $cam_item = [
+                        'ip' => $cip,
+                        'port' => ($cport > 0 ? $cport : 80),
+                        'sender' => $csender
+                    ];
+                    if (!empty($cuser)) $cam_item['user'] = $cuser;
+                    if (!empty($cpass)) $cam_item['password'] = $cpass;
+                    $cam_list[] = $cam_item;
+                }
+            }
+            $config['ISAPI_CAMERAS'] = $cam_list;
+        } else {
+            $config['ISAPI_CAMERAS'] = trim($_POST['isapi_cameras'] ?? '');
+        }
 
         $new_loglevel = intval($_POST['plugin_loglevel'] ?? 4);
         $config['DEBUG'] = ($new_loglevel >= 7 || isset($_POST['debug'])) ? "True" : "False";
@@ -881,6 +1020,78 @@ $active_tab = $_GET['tab'] ?? 'settings';
                         </div>
                     </div>
 
+                    <!-- Hikvision ISAPI AlertStream Panel -->
+                    <div style="margin-bottom: 25px; background: #f8fafc; padding: 18px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
+                            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                                <input type="checkbox" name="enable_isapi" id="enable_isapi" onchange="toggleIsapiPanel()" <?php echo ($config['ENABLE_ISAPI'] === "True" || $config['ENABLE_ISAPI'] === true) ? 'checked' : ''; ?>>
+                                <span style="font-weight: 700; color: #0284c7; font-size: 1.05rem;">⚡ Hikvision ISAPI AlertStream (Ultra-Low Latency &lt; 10 ms)</span>
+                            </label>
+                            <span style="font-size: 0.8rem; background: #e0f2fe; color: #0369a1; padding: 3px 8px; border-radius: 4px; font-weight: 600;">
+                                Hybridní režim: ISAPI (&lt;10ms) + SMTP fallback
+                            </span>
+                        </div>
+                        <div style="font-size: 0.85rem; color: #64748b; margin-bottom: 15px; line-height: 1.5;">
+                            Aktivuje přímé permanentní HTTP AlertStream spojení z kamer Hikvision do LoxBerry. Události (Line Crossing, Intrusion, Motion) jsou do MQTT doručovány <b>okamžitě (&lt; 10 ms)</b> bez 35s prodlevy SMTP protokolu. Ostatní kamery a záloha fungují nadále přes vestavěný SMTP server.
+                        </div>
+
+                        <div id="isapi-panel-body">
+                            <!-- Global Default Credentials -->
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 20px; background: white; padding: 12px 14px; border-radius: 6px; border: 1px solid #cbd5e1;">
+                                <div>
+                                    <label style="display: block; font-weight: 600; margin-bottom: 4px; color: #334155; font-size: 0.88rem;">Výchozí ISAPI Uživatel:</label>
+                                    <input type="text" name="isapi_user" id="isapi_user" value="<?php echo htmlspecialchars($config['ISAPI_USER'] ?? 'admin'); ?>" style="width: 100%; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.88rem;">
+                                </div>
+                                <div>
+                                    <label style="display: block; font-weight: 600; margin-bottom: 4px; color: #334155; font-size: 0.88rem;">Výchozí ISAPI Heslo (Digest Auth):</label>
+                                    <input type="password" name="isapi_password" id="isapi_password" value="<?php echo htmlspecialchars($config['ISAPI_PASSWORD'] ?? ''); ?>" placeholder="••••••••" style="width: 100%; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.88rem;">
+                                </div>
+                            </div>
+
+                            <!-- Preset quick buttons -->
+                            <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;">
+                                <span style="font-weight: 600; font-size: 0.85rem; color: #475569;">Předvolby kamer:</span>
+                                <button type="button" onclick="addPresetIsapiCamera('cam3@nm315.cz', '10.0.40.103', 80)" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">+ Cam 3 Vchod (10.0.40.103)</button>
+                                <button type="button" onclick="addPresetIsapiCamera('cam4@nm315.cz', '10.0.40.104', 80)" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">+ Cam 4 Zahrada (10.0.40.104)</button>
+                                <button type="button" onclick="addPresetIsapiCamera('cam2@nm315.cz', '10.0.40.102', 80)" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">+ Cam 2 Parking (10.0.40.102)</button>
+                            </div>
+
+                            <!-- Camera Table Mode -->
+                            <div id="isapi-table-mode">
+                                <table id="isapi-cameras-table" style="width: 100%; border-collapse: collapse; background: white; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; margin-bottom: 12px;">
+                                    <thead>
+                                        <tr style="background: #f8fafc; text-align: left; border-bottom: 1px solid #cbd5e1; font-size: 0.85rem; color: #475569;">
+                                            <th style="padding: 10px 12px; width: 26%;">Alias / Sender (MQTT topic)</th>
+                                            <th style="padding: 10px 12px; width: 20%;">IP adresa</th>
+                                            <th style="padding: 10px 12px; width: 10%;">Port</th>
+                                            <th style="padding: 10px 12px; width: 26%;">Live Stav &amp; Diagnostika</th>
+                                            <th style="padding: 10px 12px; width: 18%; text-align: center;">Akce</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="isapi-cameras-tbody">
+                                        <!-- Dynamic rows -->
+                                    </tbody>
+                                </table>
+
+                                <div style="display: flex; gap: 10px; margin-bottom: 10px; align-items: center; flex-wrap: wrap; background: #f1f5f9; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                    <input type="text" id="new-cam-sender" placeholder="Alias (např. cam3@nm315.cz)" style="flex: 1.2; min-width: 160px; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem;">
+                                    <input type="text" id="new-cam-ip" placeholder="IP (např. 10.0.40.103)" style="flex: 1; min-width: 130px; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem;">
+                                    <input type="number" id="new-cam-port" value="80" placeholder="Port" style="width: 70px; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem;">
+                                    <button type="button" onclick="addCustomIsapiCameraFromInput()" style="background: #0284c7; color: white; border: none; padding: 7px 14px; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 0.85rem;">+ Přidat kameru</button>
+                                </div>
+                            </div>
+
+                            <!-- Expert Raw Text Mode Toggle -->
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                                <a href="javascript:void(0)" onclick="toggleIsapiExpertMode()" id="isapi-expert-toggle" style="font-size: 0.85rem; color: #0284c7; text-decoration: underline; font-weight: 600;">⚙️ Přepnout na Expertní surový text (ISAPI_CAMERAS)</a>
+                            </div>
+                            <div id="isapi-expert-mode" style="display: none; margin-top: 10px;">
+                                <input type="text" name="isapi_cameras" id="isapi_cameras" value="<?php echo htmlspecialchars(is_array($config['ISAPI_CAMERAS']) ? json_encode($config['ISAPI_CAMERAS']) : strval($config['ISAPI_CAMERAS'])); ?>" placeholder="10.0.40.103:cam3@nm315.cz, 10.0.40.104:cam4@nm315.cz" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: monospace;">
+                                <span class="field-hint">Zadejte JSON pole nebo čárkou oddělený seznam <code>IP:sender</code>.</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Hikvision Latency & Optimization Card -->
                     <div style="margin-bottom: 25px; padding: 16px; background: #0f172a; color: #f8fafc; border-radius: 8px; border-left: 4px solid #38bdf8; font-size: 0.9rem;">
                         <h4 style="margin: 0 0 10px 0; color: #38bdf8; font-size: 1rem;"><i class="fa fa-tachometer"></i> Doporučené nastavení Hikvision kamer pro minimální latenci (&lt; 10 ms)</h4>
@@ -1265,6 +1476,191 @@ $active_tab = $_GET['tab'] ?? 'settings';
         }
     }
 
+    // ISAPI Cameras Table Management
+    let isapiCameras = <?php echo json_encode($isapi_cameras_list ?? []); ?>;
+
+    function renderIsapiTable() {
+        const tbody = document.getElementById('isapi-cameras-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (!Array.isArray(isapiCameras) || isapiCameras.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 15px; font-style: italic;">Žádné kamery pro přímý ISAPI stream. Klikněte na "+ Přidat kameru" nebo předvolbu výše.</td></tr>`;
+            syncIsapiCamerasFromTable();
+            return;
+        }
+
+        isapiCameras.forEach((cam, idx) => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #e2e8f0';
+            const senderVal = cam.sender || ('cam_' + (cam.ip || ''));
+            const ipVal = cam.ip || '';
+            const portVal = cam.port || 80;
+
+            tr.innerHTML = `
+                <td style="padding: 8px 12px; font-family: monospace; font-weight: 600; color: #0284c7;">
+                    <input type="text" name="isapi_cam_sender[]" value="${escapeHtml(senderVal)}" required oninput="syncIsapiCamerasFromTable()" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 0.88rem;">
+                </td>
+                <td style="padding: 8px 12px; font-family: monospace; font-weight: 600; color: #1e293b;">
+                    <input type="text" name="isapi_cam_ip[]" value="${escapeHtml(ipVal)}" required oninput="syncIsapiCamerasFromTable()" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-family: monospace; font-size: 0.88rem;">
+                </td>
+                <td style="padding: 8px 12px;">
+                    <input type="number" name="isapi_cam_port[]" value="${escapeHtml(portVal)}" min="1" max="65535" oninput="syncIsapiCamerasFromTable()" style="width: 100%; border: 1px solid #cbd5e1; padding: 6px; border-radius: 4px; font-size: 0.88rem;">
+                </td>
+                <td style="padding: 8px 12px;" id="isapi-status-${idx}">
+                    <span style="color: #64748b; font-size: 0.85rem;">⚪ Neověřeno</span>
+                </td>
+                <td style="padding: 8px 12px; text-align: center; white-space: nowrap;">
+                    <button type="button" onclick="testIsapiCameraDirect(${idx})" style="background: #0284c7; color: white; border: none; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 0.82rem; margin-right: 4px;" title="Testovat ISAPI spojení">🧪 Test</button>
+                    <button type="button" onclick="removeIsapiCamera(${idx})" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 5px 8px; cursor: pointer; font-size: 0.82rem;" title="Smazat kameru">🗑️</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+        syncIsapiCamerasFromTable();
+    }
+
+    function readCurrentIsapiTableState() {
+        const ipInputs = document.querySelectorAll('input[name="isapi_cam_ip[]"]');
+        const senderInputs = document.querySelectorAll('input[name="isapi_cam_sender[]"]');
+        const portInputs = document.querySelectorAll('input[name="isapi_cam_port[]"]');
+        const updated = [];
+        if (ipInputs && ipInputs.length > 0) {
+            ipInputs.forEach((inp, i) => {
+                const ipVal = inp.value.trim();
+                const senderVal = senderInputs[i] ? senderInputs[i].value.trim() : ('cam_' + ipVal);
+                const portVal = portInputs[i] ? parseInt(portInputs[i].value.trim()) || 80 : 80;
+                if (ipVal) {
+                    updated.push({ ip: ipVal, sender: senderVal, port: portVal });
+                }
+            });
+            return updated;
+        }
+        return isapiCameras;
+    }
+
+    function syncIsapiCamerasFromTable() {
+        const list = readCurrentIsapiTableState();
+        const rawInput = document.getElementById('isapi_cameras');
+        if (rawInput) {
+            rawInput.value = JSON.stringify(list);
+        }
+    }
+
+    function addIsapiCamera(sender, ip, port = 80) {
+        isapiCameras = readCurrentIsapiTableState();
+        ip = (ip || '').trim();
+        sender = (sender || '').trim() || ('cam_' + ip);
+        if (!ip) return;
+        const existing = isapiCameras.find(c => c.ip === ip || c.sender === sender);
+        if (existing) {
+            showToast('⚠️ Kamera s IP ' + ip + ' nebo aliasem ' + sender + ' již v seznamu existuje.', false);
+            return;
+        }
+        isapiCameras.push({ sender: sender, ip: ip, port: port });
+        renderIsapiTable();
+        showToast('✅ Kamera ' + sender + ' (' + ip + ') přidána.', true);
+    }
+
+    function addPresetIsapiCamera(sender, ip, port = 80) {
+        addIsapiCamera(sender, ip, port);
+    }
+
+    function removeIsapiCamera(idx) {
+        isapiCameras = readCurrentIsapiTableState();
+        if (idx >= 0 && idx < isapiCameras.length) {
+            isapiCameras.splice(idx, 1);
+            renderIsapiTable();
+        }
+    }
+
+    function addCustomIsapiCameraFromInput() {
+        const senderInput = document.getElementById('new-cam-sender');
+        const ipInput = document.getElementById('new-cam-ip');
+        const portInput = document.getElementById('new-cam-port');
+        const ip = ipInput ? ipInput.value.trim() : '';
+        const sender = senderInput ? senderInput.value.trim() : '';
+        const port = portInput ? parseInt(portInput.value.trim()) || 80 : 80;
+
+        if (!ip) {
+            showToast('Zadejte prosím IP adresu kamery.', false);
+            return;
+        }
+        addIsapiCamera(sender, ip, port);
+        if (senderInput) senderInput.value = '';
+        if (ipInput) ipInput.value = '';
+    }
+
+    function testIsapiCameraDirect(idx) {
+        const ips = document.querySelectorAll('input[name="isapi_cam_ip[]"]');
+        const ports = document.querySelectorAll('input[name="isapi_cam_port[]"]');
+        const statusCell = document.getElementById('isapi-status-' + idx);
+        if (!ips[idx] || !statusCell) return;
+
+        const ip = ips[idx].value.trim();
+        const port = ports[idx] ? parseInt(ports[idx].value.trim()) || 80 : 80;
+        const globalUser = document.getElementById('isapi_user')?.value || 'admin';
+        const globalPass = document.getElementById('isapi_password')?.value || '';
+
+        statusCell.innerHTML = '<span style="color: #0284c7; font-size: 0.85rem;">⏳ Testuji...</span>';
+
+        fetch(`?_ajax=probe_camera&ip=${encodeURIComponent(ip)}&port=${port}&user=${encodeURIComponent(globalUser)}&password=${encodeURIComponent(globalPass)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    statusCell.innerHTML = `<span style="color: #15803d; font-size: 0.85rem; font-weight: 600;" title="${escapeHtml(data.message || '')}">🟢 OK (${escapeHtml(data.model || 'Hikvision')}, ${data.latency_ms}ms)</span>`;
+                    showToast(`✅ Kamera ${ip} je online (${data.model}, FW: ${data.firmware})`, true);
+                } else {
+                    statusCell.innerHTML = `<span style="color: #b91c1c; font-size: 0.85rem; font-weight: 600;" title="${escapeHtml(data.error || '')}">🔴 Chyba (${escapeHtml(data.error || 'Nedostupná')})</span>`;
+                    showToast(`❌ Test kamery ${ip} selhal: ${data.error}`, false);
+                }
+            })
+            .catch(err => {
+                statusCell.innerHTML = `<span style="color: #b91c1c; font-size: 0.85rem;">🔴 Chyba sítě</span>`;
+                showToast('Chyba při volání testu kamery', false);
+            });
+    }
+
+    function toggleIsapiPanel() {
+        const isEnabled = document.getElementById('enable_isapi')?.checked;
+        const panelBody = document.getElementById('isapi-panel-body');
+        if (panelBody) {
+            panelBody.style.opacity = isEnabled ? '1' : '0.45';
+            panelBody.style.pointerEvents = isEnabled ? 'auto' : 'none';
+        }
+    }
+
+    function toggleIsapiExpertMode() {
+        const tableMode = document.getElementById('isapi-table-mode');
+        const expertMode = document.getElementById('isapi-expert-mode');
+        const toggleBtn = document.getElementById('isapi-expert-toggle');
+        if (!tableMode || !expertMode) return;
+
+        if (expertMode.style.display === 'none' || expertMode.style.display === '') {
+            isapiCameras = readCurrentIsapiTableState();
+            syncIsapiCamerasFromTable();
+            tableMode.style.display = 'none';
+            expertMode.style.display = 'block';
+            if (toggleBtn) toggleBtn.textContent = '📋 Přepnout na Vizuální Tabulkový Manažer';
+        } else {
+            const rawVal = document.getElementById('isapi_cameras')?.value || '';
+            try {
+                const parsed = JSON.parse(rawVal);
+                if (Array.isArray(parsed)) isapiCameras = parsed;
+            } catch(e) {
+                const parts = rawVal.split(',').map(p => p.trim()).filter(p => p.length > 0);
+                isapiCameras = parts.map(p => {
+                    const sub = p.split(':');
+                    return { ip: sub[0], port: 80, sender: sub[1] || ('cam_' + sub[0]) };
+                });
+            }
+            renderIsapiTable();
+            expertMode.style.display = 'none';
+            tableMode.style.display = 'block';
+            if (toggleBtn) toggleBtn.textContent = '⚙️ Přepnout na Expertní surový text (ISAPI_CAMERAS)';
+        }
+    }
+
     function toggleMqttFields() {
         const isAuto = document.getElementById('use_loxberry_mqtt')?.checked;
         const fields = ['mqtt_host', 'mqtt_port', 'mqtt_username', 'mqtt_password'];
@@ -1436,6 +1832,8 @@ $active_tab = $_GET['tab'] ?? 'settings';
     document.addEventListener('DOMContentLoaded', () => {
         toggleMqttFields();
         renderFirewallTable();
+        renderIsapiTable();
+        toggleIsapiPanel();
         const logBox = document.getElementById('log-box');
         if (logBox) {
             logBox.scrollTop = logBox.scrollHeight;

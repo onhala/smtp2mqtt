@@ -3,3 +3,4 @@ python3-pip
 python3-aiosmtpd
 python3-paho-mqtt
 python3-pil
+python3-requests

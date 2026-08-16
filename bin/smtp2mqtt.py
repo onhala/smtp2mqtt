@@ -29,16 +29,24 @@ import socket
 import time
 import urllib.request
 import urllib.error
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.policy import default
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+try:
+    import requests
+    from requests.auth import HTTPDigestAuth
+except ImportError:
+    requests = None  # type: ignore
+    HTTPDigestAuth = None  # type: ignore
 
 try:
     from aiosmtpd.controller import UnthreadedController
     from paho.mqtt import client as mqtt, publish
 except ModuleNotFoundError as err:
     sys.stderr.write(f"Missing module: {err}. Attempting auto-install of dependencies...\n")
-    packages = ["aiosmtpd", "paho-mqtt", "aiomqtt", "pillow"]
+    packages = ["aiosmtpd", "paho-mqtt", "aiomqtt", "pillow", "requests"]
     installed = False
     for pip_args in [
         [sys.executable, "-m", "pip", "install", "--break-system-packages", "--user"] + packages,
@@ -94,6 +102,10 @@ defaults: Dict[str, Union[str, int]] = {
     "CLEANUP_ATTACHMENTS_DAYS": "30",
     "CLEANUP_LOGS_DAYS": "30",
     "CLEANUP_INTERVAL_SECONDS": "86400",
+    "ENABLE_ISAPI": "False",
+    "ISAPI_CAMERAS": "",
+    "ISAPI_USER": "admin",
+    "ISAPI_PASSWORD": "",
 }
 
 def parse_bool(value: Any) -> bool:
@@ -399,6 +411,191 @@ def parse_hikvision_event(subject: str, body: str) -> Dict[str, Any]:
     return event_info
 
 
+def parse_hikvision_isapi_alert(xml_str: str) -> Dict[str, Any]:
+    """Parses multipart XML alert chunk from Hikvision /ISAPI/Event/notification/alertStream."""
+    info: Dict[str, Any] = {
+        "event_type": "motion",
+        "event_label": "Motion Detection",
+        "event_icon": "📹",
+        "target_type": "unknown",
+        "channel_id": "1",
+        "channel_name": None,
+        "event_time": None,
+        "event_state": "active",
+        "raw_details": {}
+    }
+
+    if not xml_str:
+        return info
+
+    try:
+        # Strip default XML namespace for clean ElementTree queries
+        clean_xml = re.sub(r'\s+xmlns="[^"]+"', '', xml_str)
+        root = ET.fromstring(clean_xml)
+
+        ev_type_elem = root.find(".//eventType")
+        if ev_type_elem is not None and ev_type_elem.text:
+            raw_type = ev_type_elem.text.strip().lower()
+            if "linedetection" in raw_type or "line" in raw_type:
+                info["event_type"] = "line_crossing"
+                info["event_label"] = "Line Crossing Detection"
+                info["event_icon"] = "🚶"
+            elif "fielddetection" in raw_type or "intrusion" in raw_type:
+                info["event_type"] = "intrusion"
+                info["event_label"] = "Intrusion Detection"
+                info["event_icon"] = "🛡️"
+            elif "regionentrance" in raw_type:
+                info["event_type"] = "region_entrance"
+                info["event_label"] = "Region Entrance"
+                info["event_icon"] = "🚪"
+            elif "regionexiting" in raw_type:
+                info["event_type"] = "region_exiting"
+                info["event_label"] = "Region Exiting"
+                info["event_icon"] = "🚪"
+            elif "facedetection" in raw_type or "facesnap" in raw_type or "face" in raw_type:
+                info["event_type"] = "face"
+                info["event_label"] = "Face Detection"
+                info["event_icon"] = "👤"
+            elif "tamper" in raw_type or "shelter" in raw_type:
+                info["event_type"] = "tamper"
+                info["event_label"] = "Tamper Alarm"
+                info["event_icon"] = "⚠️"
+            elif "scenechange" in raw_type:
+                info["event_type"] = "scene_change"
+                info["event_label"] = "Scene Change"
+                info["event_icon"] = "🔄"
+            elif "loitering" in raw_type:
+                info["event_type"] = "loitering"
+                info["event_label"] = "Loitering Detection"
+                info["event_icon"] = "⏳"
+            elif "unattendedbaggage" in raw_type or "objectleft" in raw_type:
+                info["event_type"] = "unattended_baggage"
+                info["event_label"] = "Unattended Baggage"
+                info["event_icon"] = "🧳"
+            elif "attendedbaggage" in raw_type or "objectremoval" in raw_type:
+                info["event_type"] = "object_removal"
+                info["event_label"] = "Object Removal"
+                info["event_icon"] = "📦"
+            elif "io" in raw_type or "alarm" in raw_type:
+                info["event_type"] = "io_alarm"
+                info["event_label"] = "IO Alarm Input"
+                info["event_icon"] = "⚡"
+            elif "disk" in raw_type:
+                info["event_type"] = "disk_error"
+                info["event_label"] = "Disk Exception / Error"
+                info["event_icon"] = "💾"
+            elif "ipconflict" in raw_type or "nicbroken" in raw_type:
+                info["event_type"] = "network_error"
+                info["event_label"] = "Network / IP Error"
+                info["event_icon"] = "🌐"
+            elif "illaccess" in raw_type:
+                info["event_type"] = "illegal_access"
+                info["event_label"] = "Illegal Access Attempt"
+                info["event_icon"] = "🔒"
+            else:
+                info["event_type"] = "motion"
+                info["event_label"] = "Motion Detection"
+                info["event_icon"] = "📹"
+
+        target_elem = root.find(".//targetType")
+        if target_elem is None:
+            target_elem = root.find(".//detectionTarget")
+        if target_elem is not None and target_elem.text:
+            t_val = target_elem.text.strip().lower()
+            if "human" in t_val or "person" in t_val:
+                info["target_type"] = "human"
+            elif "vehicle" in t_val or "car" in t_val:
+                info["target_type"] = "vehicle"
+
+        ch_name_elem = root.find(".//channelName")
+        if ch_name_elem is not None and ch_name_elem.text:
+            info["channel_name"] = ch_name_elem.text.strip()
+
+        ch_id_elem = root.find(".//channelID")
+        if ch_id_elem is None:
+            ch_id_elem = root.find(".//dynChannelID")
+        if ch_id_elem is not None and ch_id_elem.text:
+            info["channel_id"] = ch_id_elem.text.strip()
+
+        dt_elem = root.find(".//dateTime")
+        if dt_elem is not None and dt_elem.text:
+            info["event_time"] = dt_elem.text.strip()
+
+        st_elem = root.find(".//eventState")
+        if st_elem is not None and st_elem.text:
+            info["event_state"] = st_elem.text.strip().lower()
+
+        desc_elem = root.find(".//eventDescription")
+        if desc_elem is not None and desc_elem.text:
+            info["raw_details"]["eventDescription"] = desc_elem.text.strip()
+
+    except Exception as e:
+        log.debug("Error parsing ISAPI alert XML: %s", e)
+
+    return info
+
+
+def probe_camera_isapi(ip: str, port: int = 80, user: str = "admin", pwd: str = "") -> Dict[str, Any]:
+    """Tests connectivity and credentials against Hikvision ISAPI /ISAPI/System/deviceInfo."""
+    if requests is None or HTTPDigestAuth is None:
+        return {"success": False, "error": "Missing python 'requests' module"}
+
+    url = f"http://{ip}:{port}/ISAPI/System/deviceInfo"
+    auth = HTTPDigestAuth(user, pwd) if user and pwd else None
+    t0 = time.perf_counter()
+    try:
+        resp = requests.get(url, auth=auth, timeout=3.5)
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        if resp.status_code == 200:
+            dev_name = ""
+            model = ""
+            fw = ""
+            try:
+                clean_xml = re.sub(r'\s+xmlns="[^"]+"', '', resp.text)
+                root = ET.fromstring(clean_xml)
+                dev_name_el = root.find(".//deviceName")
+                model_el = root.find(".//model")
+                fw_el = root.find(".//firmwareVersion")
+                if dev_name_el is not None and dev_name_el.text:
+                    dev_name = dev_name_el.text.strip()
+                if model_el is not None and model_el.text:
+                    model = model_el.text.strip()
+                if fw_el is not None and fw_el.text:
+                    fw = fw_el.text.strip()
+            except Exception:
+                pass
+            return {
+                "success": True,
+                "status_code": 200,
+                "latency_ms": elapsed_ms,
+                "device_name": dev_name,
+                "model": model,
+                "firmware": fw,
+                "message": f"Connected ({model or dev_name or 'Hikvision'}, FW: {fw}, {elapsed_ms}ms)"
+            }
+        elif resp.status_code == 401:
+            return {
+                "success": False,
+                "status_code": 401,
+                "latency_ms": elapsed_ms,
+                "error": "Authentication Failed (401 Unauthorized) - Check username/password"
+            }
+        else:
+            return {
+                "success": False,
+                "status_code": resp.status_code,
+                "latency_ms": elapsed_ms,
+                "error": f"HTTP Error {resp.status_code}"
+            }
+    except Exception as e:
+        err_msg = str(e)
+        if "timed out" in err_msg.lower():
+            err_msg = "Connection timed out (Host unreachable)"
+        elif "connection refused" in err_msg.lower():
+            err_msg = f"Connection refused on {ip}:{port}"
+        return {"success": False, "error": err_msg}
+
+
 def get_data_dir() -> str:
     """Returns the base data directory (LBPDATA if in LoxBerry mode, otherwise current dir)."""
     return loxberry_paths.get("LBPDATA", ".")
@@ -429,7 +626,7 @@ if use_lb_mqtt and lb_mqtt_defaults:
         if k in lb_mqtt_defaults and lb_mqtt_defaults[k] not in (None, ""):
             config[k] = lb_mqtt_defaults[k]
 
-for setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB", "USE_LOXBERRY_MQTT"):
+for setting in ("SAVE_ATTACHMENTS", "SAVE_ATTACHMENTS_DURING_RESET_TIME", "DEBUG", "ENABLE_WEB", "USE_LOXBERRY_MQTT", "ENABLE_ISAPI"):
     config[setting] = parse_bool(config.get(setting, defaults.get(setting, False)))
 
 for setting in ("SMTP_PORT", "MQTT_PORT", "MQTT_RESET_TIME", "WEB_PORT", "CLEANUP_ATTACHMENTS_DAYS", "CLEANUP_LOGS_DAYS", "CLEANUP_INTERVAL_SECONDS"):
@@ -509,7 +706,7 @@ if log_dir:
         log.error(f"Failed to set up file logger: {e}. Continuing with console-only logging.")
 
 
-VERSION = "2.0.1"
+VERSION = "2.1.0"
 
 
 class smtp2mqttHandler:
@@ -529,6 +726,11 @@ class smtp2mqttHandler:
         self.latest_version: Optional[str] = None
         self.update_available: bool = False
         self.version_check_status: str = "pending"
+
+        # ISAPI Stream status and tasks
+        self.isapi_running = False
+        self.isapi_stream_tasks: List[asyncio.Task] = []
+        self.isapi_status: Dict[str, Dict[str, Any]] = {}
 
         # Prometheus metrics datastructures
         self.metrics_events_count: Dict[Tuple[str, str, str], int] = {}
@@ -615,7 +817,7 @@ class smtp2mqttHandler:
         if config["SAVE_ATTACHMENTS"]:
             log.info("Configured to save attachments to 'attachments' directory")
 
-    def log_action(self, action_type: str, sender: str, topic: str, payload: str, success: bool) -> None:
+    def log_action(self, action_type: str, sender: str, topic: str, payload: str, success: bool, event_info: Optional[Dict[str, Any]] = None) -> None:
         """Helper to thread-safely record an action status update."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.last_publish_success = success
@@ -635,6 +837,10 @@ class smtp2mqttHandler:
             event_type = "system"
             event_label = "System Action"
             event_icon = "⚙️"
+        elif event_info and event_info.get("event_type"):
+            event_type = event_info.get("event_type", "motion")
+            event_label = event_info.get("event_label", "Motion Detection")
+            event_icon = event_info.get("event_icon", "📹")
         else:
             event_type = "motion"
             event_label = "Motion Detection"
@@ -651,7 +857,7 @@ class smtp2mqttHandler:
             "event_type": event_type,
             "event_label": event_label,
             "event_icon": event_icon,
-            "event_details": {}
+            "event_details": event_info or {}
         }
         self.recent_actions.insert(0, action)
         if len(self.recent_actions) > 20:
@@ -1023,7 +1229,7 @@ class smtp2mqttHandler:
             log.exception("Exception occurred while saving attachments")
         return saved_files
 
-    def mqtt_publish(self, topic: str, payload: str, action_type: str = "trigger", sender: str = "system", wait_for_publish: bool = False) -> None:
+    def mqtt_publish(self, topic: str, payload: str, action_type: str = "trigger", sender: str = "system", wait_for_publish: bool = False, event_info: Optional[Dict[str, Any]] = None) -> None:
         """Publishes a payload to MQTT broker."""
         log.info("Publishing payload '%s' to topic '%s'", payload, topic)
         success = False
@@ -1056,7 +1262,264 @@ class smtp2mqttHandler:
         except Exception as e:
             log.error("Failed to publish MQTT message to %s: %s", topic, e, exc_info=True)
         finally:
-            self.log_action(action_type, sender, topic, payload, success)
+            self.log_action(action_type, sender, topic, payload, success, event_info)
+
+    async def trigger_camera_event(
+        self,
+        sender: str,
+        event_type: str = "motion",
+        target_type: str = "unknown",
+        details: Optional[Dict[str, Any]] = None,
+        source: str = "isapi"
+    ) -> None:
+        """Processes instant camera event trigger (< 5 ms latency) from ISAPI stream."""
+        sanitized_sender = (
+            sender.replace("@", "-")
+            .replace("/", "_")
+            .replace("+", "_")
+            .replace("#", "_")
+        )
+        topic = f"{config['MQTT_TOPIC']}/{sanitized_sender}"
+        is_triggered = topic in self.handles
+        t_start = time.perf_counter()
+
+        event_label = details.get("event_label") if details else "Motion Detection"
+        event_icon = details.get("event_icon") if details else "📹"
+
+        event_meta = {
+            "event_type": event_type,
+            "event_label": event_label,
+            "event_icon": event_icon,
+            "target_type": target_type,
+            "camera_name": details.get("channel_name") if details else None,
+            "event_time": details.get("event_time") if details else datetime.now().isoformat(),
+            "source": source,
+            "raw_details": details or {}
+        }
+
+        if not is_triggered:
+            log.info("[%s] Early ISAPI trigger publishing MQTT payload for topic: %s (event: %s, target: %s)", sender, topic, event_type, target_type)
+            await asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_PAYLOAD"], "trigger", sender, False, event_meta)
+        else:
+            log.info("[%s] Topic %s already triggered. Extending reset timer (Variant B, source: %s).", sender, topic, source)
+            self.log_action("trigger (extended)", sender, topic, config["MQTT_PAYLOAD"], True, event_meta)
+
+        trigger_dur = max(0.0001, time.perf_counter() - t_start)
+        if not hasattr(self, "metrics_trigger_durations"):
+            self.metrics_trigger_durations = {}
+        self.metrics_trigger_durations[sender] = trigger_dur
+
+        # Cancel existing reset timer and schedule new sliding window
+        if topic in self.handles:
+            self.handles.pop(topic).cancel()
+
+        if self.reset_time > 0:
+            reset_time_seconds = float(self.reset_time)
+            self.handles[topic] = self.loop.call_later(
+                reset_time_seconds, self._trigger_reset, topic
+            )
+
+        # Publish event metadata topic if enabled
+        if parse_bool(config.get("ENABLE_EVENT_TOPIC", True)):
+            event_topic = f"{topic}/event"
+            event_payload = json.dumps({
+                "event": event_type,
+                "label": event_label,
+                "target": target_type,
+                "source": source,
+                "camera_name": details.get("channel_name") if details else None,
+                "event_time": details.get("event_time") if details else datetime.now().isoformat(),
+                "details": details or {}
+            })
+            await asyncio.to_thread(self.mqtt_publish, event_topic, event_payload, "event_metadata", sender)
+
+        # Update metrics
+        cam_key = sender
+        ev_key = (cam_key, event_type, target_type)
+        if not hasattr(self, "metrics_events_count"):
+            self.metrics_events_count = {}
+        self.metrics_events_count[ev_key] = self.metrics_events_count.get(ev_key, 0) + 1
+
+    async def start_isapi_streams(self) -> None:
+        """Parses ISAPI_CAMERAS (JSON list or comma-delimited string) and starts persistent alertStream background workers."""
+        if not parse_bool(config.get("ENABLE_ISAPI", False)):
+            return
+        
+        cameras_cfg = config.get("ISAPI_CAMERAS", "")
+        if not cameras_cfg:
+            log.info("ISAPI stream enabled but ISAPI_CAMERAS is empty. No streams to start.")
+            return
+
+        default_user = str(config.get("ISAPI_USER", "admin")).strip()
+        default_pwd = str(config.get("ISAPI_PASSWORD", "")).strip()
+        
+        self.isapi_running = True
+        self.isapi_stream_tasks = []
+        
+        camera_entries: List[Dict[str, Any]] = []
+        # Try JSON format first
+        if isinstance(cameras_cfg, list):
+            camera_entries = cameras_cfg
+        elif isinstance(cameras_cfg, str) and (cameras_cfg.strip().startswith("[") or cameras_cfg.strip().startswith("{")):
+            try:
+                parsed = json.loads(cameras_cfg)
+                if isinstance(parsed, list):
+                    camera_entries = parsed
+                elif isinstance(parsed, dict):
+                    camera_entries = [parsed]
+            except Exception:
+                camera_entries = []
+
+        if not camera_entries and isinstance(cameras_cfg, str):
+            # Parse legacy comma-delimited list: "10.0.40.103:cam3@nm315.cz, 10.0.40.104:cam4@nm315.cz"
+            for entry in cameras_cfg.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                parts = entry.split(":")
+                if len(parts) == 1:
+                    ip = parts[0].strip()
+                    port = 80
+                    sender = f"cam_{ip}"
+                elif len(parts) == 2:
+                    ip = parts[0].strip()
+                    if parts[1].strip().isdigit():
+                        port = int(parts[1].strip())
+                        sender = f"cam_{ip}"
+                    else:
+                        port = 80
+                        sender = parts[1].strip()
+                else:
+                    ip = parts[0].strip()
+                    port = int(parts[1].strip()) if parts[1].strip().isdigit() else 80
+                    sender = parts[2].strip()
+                
+                camera_entries.append({
+                    "ip": ip,
+                    "port": port,
+                    "sender": sender,
+                    "user": default_user,
+                    "password": default_pwd
+                })
+
+        for cam in camera_entries:
+            ip = str(cam.get("ip", "")).strip()
+            if not ip:
+                continue
+            try:
+                port = int(cam.get("port", 80))
+            except (ValueError, TypeError):
+                port = 80
+            sender = str(cam.get("sender") or f"cam_{ip}").strip()
+            user = str(cam.get("user") or default_user).strip()
+            pwd = str(cam.get("password") if cam.get("password") is not None else default_pwd)
+
+            self.isapi_status[sender] = {
+                "ip": ip,
+                "port": port,
+                "sender": sender,
+                "user": user,
+                "status": "initializing",
+                "last_event_time": None,
+                "last_event_type": None,
+                "events_count": 0,
+            }
+            
+            task = self.loop.create_task(self._isapi_camera_worker(ip, port, sender, user, pwd))
+            self.isapi_stream_tasks.append(task)
+            log.info("Registered ISAPI stream task for %s (%s:%d)", sender, ip, port)
+
+    def stop_isapi_streams(self) -> None:
+        """Stops all running ISAPI alertStream workers."""
+        self.isapi_running = False
+        if hasattr(self, "isapi_stream_tasks") and self.isapi_stream_tasks:
+            log.info("Stopping %d ISAPI stream tasks...", len(self.isapi_stream_tasks))
+            for task in self.isapi_stream_tasks:
+                task.cancel()
+            self.isapi_stream_tasks.clear()
+
+    async def _isapi_camera_worker(self, ip: str, port: int, sender: str, user: str, pwd: str) -> None:
+        """Maintains persistent HTTP Digest Auth alertStream connection with automatic reconnect."""
+        log.info("[%s] ISAPI stream worker started for %s:%d", sender, ip, port)
+        while self.isapi_running:
+            try:
+                self.isapi_status[sender]["status"] = "connecting"
+                await asyncio.to_thread(self._run_isapi_stream_sync, ip, port, sender, user, pwd)
+            except asyncio.CancelledError:
+                log.info("[%s] ISAPI stream worker cancelled.", sender)
+                break
+            except Exception as e:
+                log.warning("[%s] ISAPI stream connection error: %s", sender, e)
+            
+            if not self.isapi_running:
+                break
+            self.isapi_status[sender]["status"] = "reconnecting"
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                break
+
+    def _run_isapi_stream_sync(self, ip: str, port: int, sender: str, user: str, pwd: str) -> None:
+        """Synchronously reads multipart/mixed boundary chunks from /ISAPI/Event/notification/alertStream."""
+        if requests is None or HTTPDigestAuth is None:
+            log.error("[%s] 'requests' module not available for ISAPI AlertStream", sender)
+            self.isapi_status[sender]["status"] = "error_missing_requests"
+            return
+
+        url = f"http://{ip}:{port}/ISAPI/Event/notification/alertStream"
+        auth = HTTPDigestAuth(user, pwd) if user and pwd else None
+        
+        try:
+            with requests.get(url, auth=auth, stream=True, timeout=(8, None)) as resp:
+                if resp.status_code != 200:
+                    log.error("[%s] ISAPI AlertStream failed with HTTP status %d", sender, resp.status_code)
+                    self.isapi_status[sender]["status"] = f"error_http_{resp.status_code}"
+                    return
+
+                log.info("[%s] ISAPI AlertStream connected successfully (HTTP 200 OK)", sender)
+                self.isapi_status[sender]["status"] = "connected"
+                self.isapi_status[sender]["connected_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                buffer: List[str] = []
+                in_alert = False
+                for line_bytes in resp.iter_lines(chunk_size=1024):
+                    if not self.isapi_running:
+                        break
+                    if line_bytes is None:
+                        continue
+                    line = line_bytes.decode("utf-8", errors="ignore").strip()
+                    if "<EventNotificationAlert" in line:
+                        buffer = [line]
+                        in_alert = True
+                    elif "</EventNotificationAlert>" in line and in_alert:
+                        buffer.append(line)
+                        xml_content = "\n".join(buffer)
+                        in_alert = False
+                        buffer = []
+                        
+                        alert_info = parse_hikvision_isapi_alert(xml_content)
+                        if alert_info.get("event_state") != "inactive":
+                            self.isapi_status[sender]["events_count"] = self.isapi_status[sender].get("events_count", 0) + 1
+                            self.isapi_status[sender]["last_event_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            self.isapi_status[sender]["last_event_type"] = alert_info.get("event_type")
+                            
+                            asyncio.run_coroutine_threadsafe(
+                                self.trigger_camera_event(
+                                    sender=sender,
+                                    event_type=alert_info.get("event_type", "motion"),
+                                    target_type=alert_info.get("target_type", "unknown"),
+                                    details=alert_info,
+                                    source="isapi"
+                                ),
+                                self.loop
+                            )
+                    elif in_alert:
+                        buffer.append(line)
+        except Exception as e:
+            if self.isapi_running:
+                log.warning("[%s] ISAPI stream connection dropped: %s", sender, e)
+                self.isapi_status[sender]["status"] = "disconnected"
+            raise
 
     def _trigger_reset(self, topic: str) -> None:
         """Callback scheduled by call_later. Triggers topic reset back to default payload."""
@@ -1074,6 +1537,7 @@ class smtp2mqttHandler:
 
     def cancel_all_resets(self) -> None:
         """Cancels all currently pending reset timers and background tasks (used for graceful shutdown)."""
+        self.stop_isapi_streams()
         if hasattr(self, "monitor_task") and self.monitor_task and not self.monitor_task.done():
             self.monitor_task.cancel()
         if hasattr(self, "monitor_smtp_task") and self.monitor_smtp_task and not self.monitor_smtp_task.done():
@@ -1376,6 +1840,8 @@ class smtp2mqttHandler:
             "latest_version": self.latest_version,
             "update_available": self.update_available,
             "version_check_status": self.version_check_status,
+            "isapi_enabled": parse_bool(config.get("ENABLE_ISAPI", False)),
+            "isapi_status": getattr(self, "isapi_status", {}),
         }
 
     def generate_prometheus_metrics(self) -> str:
@@ -1415,6 +1881,17 @@ class smtp2mqttHandler:
         lines.append("# HELP smtp2mqtt_active_reset_timers Current number of active topic reset timers")
         lines.append("# TYPE smtp2mqtt_active_reset_timers gauge")
         lines.append(f"smtp2mqtt_active_reset_timers {len(self.handles)}")
+
+        # ISAPI streams status
+        isapi_streams = getattr(self, "isapi_status", {})
+        if isapi_streams:
+            lines.append("# HELP smtp2mqtt_isapi_stream_connected ISAPI stream connection status (1 = connected, 0 = disconnected)")
+            lines.append("# TYPE smtp2mqtt_isapi_stream_connected gauge")
+            for sender, s_info in isapi_streams.items():
+                safe_sender = str(sender).replace('"', '\\"')
+                safe_ip = str(s_info.get("ip", "")).replace('"', '\\"')
+                s_val = 1 if s_info.get("status") == "connected" else 0
+                lines.append(f'smtp2mqtt_isapi_stream_connected{{camera="{safe_sender}",ip="{safe_ip}"}} {s_val}')
 
         # Camera to MQTT Latencies
         lines.append("# HELP smtp2mqtt_camera_to_mqtt_latency_seconds Estimated event age / clock skew from camera detection timestamp in seconds")
@@ -2145,6 +2622,22 @@ class smtp2mqttHandler:
                 status_dict = self.get_status_json()
                 body = json.dumps(status_dict, indent=2).encode("utf-8")
                 content_type = "application/json"
+            elif path.startswith("/api/probe_camera"):
+                import urllib.parse
+                parsed_url = urllib.parse.urlparse(path)
+                q_params = urllib.parse.parse_qs(parsed_url.query)
+                probe_ip = q_params.get("ip", [""])[0]
+                probe_port = int(q_params.get("port", ["80"])[0]) if q_params.get("port", ["80"])[0].isdigit() else 80
+                probe_user = q_params.get("user", [str(config.get("ISAPI_USER", "admin"))])[0]
+                probe_pwd = q_params.get("password", q_params.get("pwd", [str(config.get("ISAPI_PASSWORD", ""))]))[0]
+
+                if not probe_ip:
+                    probe_res = {"success": False, "error": "Missing 'ip' query parameter"}
+                else:
+                    probe_res = await asyncio.to_thread(probe_camera_isapi, probe_ip, probe_port, probe_user, probe_pwd)
+
+                body = json.dumps(probe_res, indent=2).encode("utf-8")
+                content_type = "application/json"
             elif path == "/metrics":
                 body = self.generate_prometheus_metrics().encode("utf-8")
                 content_type = "text/plain; version=0.0.4; charset=utf-8"
@@ -2338,6 +2831,11 @@ def main():
             log.info("Web server is listening on http://0.0.0.0:%d", web_port)
         except Exception as e:
             log.error("Failed to start web server on port %s: %s", config.get("WEB_PORT"), e)
+
+    # Start ISAPI alertStream listeners if enabled
+    if parse_bool(config.get("ENABLE_ISAPI", False)):
+        log.info("Starting Hikvision ISAPI AlertStream listeners...")
+        loop.create_task(handler.start_isapi_streams())
 
     # Graceful shutdown orchestration
     def handle_shutdown():
