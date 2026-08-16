@@ -5,14 +5,21 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": null,
+  "id": 2446924769087488,
   "links": [],
   "liveNow": false,
   "panels": [
     {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "🔌 Stav Systému & Komunikace",
+      "type": "row"
+    },
+    {
       "title": "Stav SMTP2MQTT Služby",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
       "id": 1,
       "targets": [
         {
@@ -38,7 +45,7 @@
     {
       "title": "MQTT Broker Spojení",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 1 },
       "id": 2,
       "targets": [
         {
@@ -64,7 +71,7 @@
     {
       "title": "SMTP Listener (Port 1025)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 0 },
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 1 },
       "id": 3,
       "targets": [
         {
@@ -90,7 +97,7 @@
     {
       "title": "Zpracováno e-mailů",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 0 },
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 1 },
       "id": 4,
       "targets": [
         {
@@ -114,7 +121,7 @@
     {
       "title": "Aktivní Auto-Reset Časovače",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 0 },
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 1 },
       "id": 5,
       "targets": [
         {
@@ -137,15 +144,22 @@
       }
     },
     {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 101,
+      "title": "⚡ Latence & Časová Osa Bezpečnostních Detekcí",
+      "type": "row"
+    },
+    {
       "title": "Reakční Latence Brány & Časový posun kamer",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
       "id": 6,
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
           "expr": "smtp2mqtt_trigger_duration_seconds * 1000",
-          "legendFormat": "Reálná Latence Triggeru (ms) - {{camera}}"
+          "legendFormat": "Reálná Trigger Latence (ms) - {{camera}}"
         },
         {
           "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
@@ -164,30 +178,153 @@
       }
     },
     {
-      "title": "Frekvence Bezpečnostních Detekcí (zprávy/min)",
+      "title": "Frekvence Bezpečnostních Detekcí v Čase (Všechny typy pohybu)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
       "id": 7,
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
-          "expr": "sum(rate(smtp2mqtt_events_detected_total[5m])) by (camera, event_type, target) * 60",
-          "legendFormat": "{{camera}} ({{event_type}} - {{target}})"
+          "expr": "sum(increase(smtp2mqtt_events_detected_total[$__interval])) by (camera, event_type, target)",
+          "legendFormat": "SMTP: {{camera}} ({{event_type}} - {{target}})"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "sum(increase(hikvision_camera_detection_events_total[$__interval])) by (camera, target)",
+          "legendFormat": "ISAPI Live: {{camera}} ({{target}})"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": {
             "drawStyle": "bars",
-            "fillOpacity": 50
-          }
+            "fillOpacity": 60,
+            "stacking": { "mode": "normal" }
+          },
+          "unit": "short"
         }
       }
     },
     {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 102,
+      "title": "🎯 Analýza Typů Pohybu, Cílů a Aktivita Kamer",
+      "type": "row"
+    },
+    {
+      "title": "Rozpad dle Typu Detekce (Line Crossing / Intrusion / VMD)",
+      "type": "piechart",
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 15 },
+      "id": 9,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "sum(increase(smtp2mqtt_events_detected_total[$__range])) by (event_type)",
+          "legendFormat": "{{event_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      }
+    },
+    {
+      "title": "Klasifikace Detekovaných Cílů (Osoby vs Vozidla)",
+      "type": "piechart",
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 15 },
+      "id": 10,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "sum(increase(smtp2mqtt_events_detected_total[$__range])) by (target)",
+          "legendFormat": "{{target}}"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "sum(increase(hikvision_camera_detection_events_total[$__range])) by (target)",
+          "legendFormat": "live_{{target}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      }
+    },
+    {
+      "title": "Celková Aktivita dle Jednotlivých Kamer",
+      "type": "bargauge",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 15 },
+      "id": 11,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "sum(increase(smtp2mqtt_events_detected_total[$__range])) by (camera) + sum(increase(hikvision_camera_detection_events_total[$__range])) by (camera)",
+          "legendFormat": "{{camera}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false },
+        "showUnfilled": true
+      }
+    },
+    {
+      "title": "Live Stav Pohybu Kamer (AcuSense)",
+      "type": "stat",
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 15 },
+      "id": 12,
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "eehvw3j6g3gu8a" },
+          "expr": "hikvision_camera_motion_active",
+          "legendFormat": "{{camera}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "KLID", "color": "green" },
+                "1": { "text": "POHYB ZACHYCEN", "color": "red" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "id": 103,
+      "title": "🛡️ Bezpečnost & Síťový Firewall",
+      "type": "row"
+    },
+    {
       "title": "Zablokované pokusy v síti (Firewall ALLOWED_IPS)",
       "type": "timeseries",
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 12 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 23 },
       "id": 8,
       "targets": [
         {
@@ -206,7 +343,7 @@
   "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["loxberry", "smtp2mqtt", "hikvision", "smart-home", "prometheus", "cameras"],
+  "tags": ["loxberry", "smtp2mqtt", "hikvision", "smart-home", "prometheus", "cameras", "motion"],
   "time": {
     "from": "now-3h",
     "to": "now"
@@ -216,5 +353,6 @@
   },
   "timezone": "browser",
   "title": "SMTP2MQTT Gateway & Camera Telemetry",
-  "uid": "smtp2mqtt-loxberry-telemetry"
+  "uid": "smtp2mqtt-loxberry-telemetry",
+  "version": 2
 }
