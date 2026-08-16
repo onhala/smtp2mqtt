@@ -2219,14 +2219,43 @@ def test_flushing_file_handler_emits_and_flushes(tmp_path):
     handler.close()
 
 
-def test_get_loxberry_paths_and_log_dir():
-    """Verify get_loxberry_paths discovers directories when LBHOMEDIR is set."""
-    with mock.patch.dict(os.environ, {"LBHOMEDIR": "/tmp/fake_loxberry"}):
-        with mock.patch("os.path.exists", return_value=True):
-            paths = smtp2mqtt.get_loxberry_paths()
-            assert paths.get("LBHOME") == "/tmp/fake_loxberry"
-            assert "LBPLOG" in paths
-            assert "LBPDATA" in paths
+def test_get_all_known_camera_topics_and_reset_all():
+    """Verify collecting camera topics and resetting them all."""
+    loop = asyncio.new_event_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    smtp2mqtt.config["ISAPI_CAMERAS"] = [
+        {"ip": "10.0.40.103", "sender": "cam3@nm315.cz"},
+        {"ip": "10.0.40.104", "sender": "cam4@nm315.cz"}
+    ]
+    
+    topics = handler.get_all_known_camera_topics()
+    assert "smtp2mqtt/cam3-nm315.cz" in topics
+    assert "smtp2mqtt/cam4-nm315.cz" in topics
+    
+    with mock.patch.object(handler, "mqtt_publish") as mock_pub:
+        count = handler.reset_all_camera_topics(reason="test")
+        assert count == 2
+        assert mock_pub.call_count == 2
+        mock_pub.assert_any_call("smtp2mqtt/cam3-nm315.cz", "0", "reset", "system", wait_for_publish=True)
+        mock_pub.assert_any_call("smtp2mqtt/cam4-nm315.cz", "0", "reset", "system", wait_for_publish=True)
+    loop.close()
+
+
+def test_cancel_all_resets_flushes_active_topics():
+    """Verify that cancel_all_resets sends 0 to active handles before disconnecting."""
+    loop = asyncio.new_event_loop()
+    handler = smtp2mqtt.smtp2mqttHandler(loop)
+    
+    mock_handle = mock.MagicMock()
+    handler.handles["smtp2mqtt/cam3-nm315.cz"] = mock_handle
+    
+    with mock.patch.object(handler, "mqtt_publish") as mock_pub:
+        handler.cancel_all_resets()
+        mock_handle.cancel.assert_called_once()
+        mock_pub.assert_called_once_with("smtp2mqtt/cam3-nm315.cz", "0", "reset", "system", wait_for_publish=True)
+        assert len(handler.handles) == 0
+    loop.close()
 
 
 

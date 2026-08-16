@@ -896,6 +896,9 @@ class smtp2mqttHandler:
         if rc == 0:
             log.info("Persistent MQTT client connected successfully to %s:%s", config["MQTT_HOST"], config["MQTT_PORT"])
             self.mqtt_connected_status = True
+            # Schedule startup zero-sync across all known camera topics
+            if hasattr(self, "loop") and self.loop and self.loop.is_running():
+                self.loop.create_task(self.sync_startup_resets())
         else:
             log.error("Persistent MQTT client failed to connect: return code %s", rc)
             self.mqtt_connected_status = False
@@ -1551,8 +1554,101 @@ class smtp2mqttHandler:
                 asyncio.to_thread(self.mqtt_publish, topic, config["MQTT_RESET_PAYLOAD"], "reset", "system", False)
             )
 
+    def get_all_known_camera_topics(self) -> List[str]:
+        """Collects all configured or recently triggered camera MQTT topics."""
+        root_topic = str(config.get("MQTT_TOPIC", "smtp2mqtt")).strip()
+        topics = set()
+
+        # 1. From ISAPI_CAMERAS configuration
+        cameras_cfg = config.get("ISAPI_CAMERAS", "")
+        if isinstance(cameras_cfg, list):
+            for cam in cameras_cfg:
+                sender = str(cam.get("sender") or ("cam_" + str(cam.get("ip", "")))).strip()
+                if sender:
+                    sanitized = sender.replace("@", "-").replace("/", "_").replace("+", "_").replace("#", "_")
+                    topics.add(f"{root_topic}/{sanitized}")
+        elif isinstance(cameras_cfg, str) and cameras_cfg.strip():
+            try:
+                parsed = json.loads(cameras_cfg)
+                if isinstance(parsed, list):
+                    for cam in parsed:
+                        sender = str(cam.get("sender") or ("cam_" + str(cam.get("ip", "")))).strip()
+                        if sender:
+                            sanitized = sender.replace("@", "-").replace("/", "_").replace("+", "_").replace("#", "_")
+                            topics.add(f"{root_topic}/{sanitized}")
+            except Exception:
+                for entry in cameras_cfg.split(","):
+                    parts = entry.strip().split(":")
+                    if len(parts) >= 3:
+                        sender = parts[2].strip()
+                    elif len(parts) == 2 and not parts[1].strip().isdigit():
+                        sender = parts[1].strip()
+                    elif len(parts) >= 1 and parts[0].strip():
+                        sender = f"cam_{parts[0].strip()}"
+                    else:
+                        sender = ""
+                    if sender:
+                        sanitized = sender.replace("@", "-").replace("/", "_").replace("+", "_").replace("#", "_")
+                        topics.add(f"{root_topic}/{sanitized}")
+
+        # 2. From recent actions
+        for act in self.recent_actions:
+            t = act.get("topic")
+            if t and t.startswith(root_topic) and not t.endswith("/event"):
+                topics.add(t)
+
+        # 3. From active timer handles
+        for t in self.handles.keys():
+            if t and t.startswith(root_topic) and not t.endswith("/event"):
+                topics.add(t)
+
+        return sorted(list(topics))
+
+    def reset_all_camera_topics(self, reason: str = "manual") -> int:
+        """Immediately publishes reset payload (0) to all known camera topics and cancels pending handles."""
+        topics = self.get_all_known_camera_topics()
+        reset_payload = str(config.get("MQTT_RESET_PAYLOAD", "0"))
+        log.info("Resetting %d camera topic(s) to '%s' (reason: %s)...", len(topics), reset_payload, reason)
+
+        # Cancel active in-memory timer handles
+        for t, handle in list(self.handles.items()):
+            try:
+                handle.cancel()
+            except Exception:
+                pass
+        self.handles.clear()
+
+        # Publish 0 to all topics
+        count = 0
+        for topic in topics:
+            try:
+                self.mqtt_publish(topic, reset_payload, "reset", "system", wait_for_publish=True)
+                count += 1
+            except Exception as e:
+                log.error("Failed to reset topic %s: %s", topic, e)
+
+        return count
+
+    async def sync_startup_resets(self) -> None:
+        """Runs once on startup / MQTT reconnect to ensure all camera signals in Loxone are cleanly set to 0."""
+        await asyncio.sleep(0.5)
+        topics = self.get_all_known_camera_topics()
+        if not topics:
+            return
+        log.info("Startup Zero-Sync: Broadcasting reset payload '%s' to %d known camera topic(s)...", config.get("MQTT_RESET_PAYLOAD", "0"), len(topics))
+        for topic in topics:
+            await asyncio.to_thread(
+                self.mqtt_publish,
+                topic,
+                config["MQTT_RESET_PAYLOAD"],
+                "reset",
+                "system",
+                False,
+                {"event_type": "reset", "event_label": "Startup Zero-Sync (0)", "event_icon": "🧹", "source": "reset"}
+            )
+
     def cancel_all_resets(self) -> None:
-        """Cancels all currently pending reset timers and background tasks (used for graceful shutdown)."""
+        """Flushes reset payload (0) to active topics, cancels pending timers, and gracefully stops tasks."""
         self.stop_isapi_streams()
         if hasattr(self, "monitor_task") and self.monitor_task and not self.monitor_task.done():
             self.monitor_task.cancel()
@@ -1569,6 +1665,20 @@ class smtp2mqttHandler:
             for task in list(self.background_tasks):
                 task.cancel()
             self.background_tasks.clear()
+
+        # Graceful Shutdown Flush: send 0 to all currently active triggered topics before closing MQTT
+        if self.handles:
+            log.info("Graceful Shutdown: Flushing reset payload '0' to %d active topic(s)...", len(self.handles))
+            for topic, handle in list(self.handles.items()):
+                try:
+                    handle.cancel()
+                except Exception:
+                    pass
+                try:
+                    self.mqtt_publish(topic, config["MQTT_RESET_PAYLOAD"], "reset", "system", wait_for_publish=True)
+                except Exception as e:
+                    log.error("Failed to flush shutdown reset for %s: %s", topic, e)
+            self.handles.clear()
         
         # Stop and disconnect persistent MQTT client
         if hasattr(self, "_mqtt_client") and self._mqtt_client is not None:
@@ -1578,13 +1688,6 @@ class smtp2mqttHandler:
                 self._mqtt_client.disconnect()
             except Exception as e:
                 log.error("Error stopping persistent MQTT client: %s", e)
-
-        if not self.handles:
-            return
-        log.info("Cancelling %d active reset timers...", len(self.handles))
-        for topic, handle in list(self.handles.items()):
-            handle.cancel()
-        self.handles.clear()
 
     async def run_periodic_cleanup(self) -> None:
         """Periodically scans and cleans up old attachments and log files."""
@@ -2652,7 +2755,14 @@ class smtp2mqttHandler:
                 else:
                     probe_res = await asyncio.to_thread(probe_camera_isapi, probe_ip, probe_port, probe_user, probe_pwd)
 
-                body = json.dumps(probe_res, indent=2).encode("utf-8")
+            elif path.startswith("/api/reset_all") or path.startswith("/reset_all"):
+                reset_count = self.reset_all_camera_topics(reason="web_api")
+                res = {
+                    "success": True,
+                    "reset_count": reset_count,
+                    "message": f"Successfully published reset payload ('{config.get('MQTT_RESET_PAYLOAD', '0')}') to {reset_count} camera topic(s)."
+                }
+                body = json.dumps(res, indent=2).encode("utf-8")
                 content_type = "application/json"
             elif path == "/metrics":
                 body = self.generate_prometheus_metrics().encode("utf-8")

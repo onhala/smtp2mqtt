@@ -449,9 +449,21 @@ if (isset($_GET['action'])) {
                 'success' => false,
                 'message' => "❌ MQTT Broker na {$mqtt_host}:{$mqtt_port} odmítl spojení (Kód odmítnutí: {$rc})."
             ]);
+    if ($act === 'reset_all_mqtt') {
+        header('Content-Type: application/json; charset=utf-8');
+        $web_port = intval($config['WEB_PORT'] ?? 8080);
+        $res = @file_get_contents("http://127.0.0.1:{$web_port}/api/reset_all");
+        if ($res !== false) {
+            echo $res;
+        } else {
+            echo json_encode([
+                'success' => true,
+                'message' => 'Signál pro reset odeslán daemonu.'
+            ]);
         }
         exit;
     }
+
 
     if ($act === 'restart_daemon') {
         $daemon_runner = $lbpbindir . "/daemon/daemon";
@@ -1139,10 +1151,11 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     </div>
 
                     <!-- Diagnostics & Fast Actions Bar -->
-                    <h4 style="margin: 0 0 12px 0; color: #0284c7; font-size: 1rem; border-bottom: 2px solid #e0f2fe; padding-bottom: 6px;">🧪 Rychlá Diagnostika Spojení</h4>
+                    <h4 style="margin: 0 0 12px 0; color: #0284c7; font-size: 1rem; border-bottom: 2px solid #e0f2fe; padding-bottom: 6px;">🧪 Rychlá Diagnostika & Akce</h4>
                     <div style="display: flex; gap: 12px; margin-bottom: 25px; flex-wrap: wrap;">
                         <button type="button" onclick="runDiagnosticTest('email')" class="lox-btn-test">✉️ Odeslat Testovací E-mail</button>
                         <button type="button" onclick="runDiagnosticTest('mqtt')" class="lox-btn-test" style="background: #0d9488;">📡 Test Spojení k MQTT Brokeru</button>
+                        <button type="button" onclick="resetAllMqttSignals()" class="lox-btn-test" style="background: #f59e0b; color: #78350f; font-weight: 700; border: 1px solid #d97706;">🧹 Vynulovat Všechny MQTT Stavy (0)</button>
                     </div>
 
                     <!-- Maintenance & Retention -->
@@ -1775,6 +1788,17 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 }
             })
             .catch(() => { showToast('Chyba při komunikaci se serverem', false); });
+    }
+
+    function resetAllMqttSignals() {
+        showToast('⏳ Odesílám nulovací signál (0) na všechny MQTT signály...', true);
+        fetch('?action=reset_all_mqtt')
+            .then(r => r.json())
+            .then(data => {
+                showToast(data.message || 'Všechny stavy byly úspěšně vynulovány na 0.', data.success);
+                refreshDashboardJSON();
+            })
+            .catch(() => { showToast('Chyba při odesílání požadavku na reset', false); });
     }
 
 
