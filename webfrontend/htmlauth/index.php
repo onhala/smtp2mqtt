@@ -1232,16 +1232,17 @@ $active_tab = $_GET['tab'] ?? 'settings';
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
                         <thead>
                             <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
-                                <th style="text-align: left; padding: 10px 12px;">Čas</th>
-                                <th style="text-align: left; padding: 10px 12px;">Typ</th>
-                                <th style="text-align: left; padding: 10px 12px;">Odesílatel (Kamera)</th>
-                                <th style="text-align: left; padding: 10px 12px;">MQTT Topic</th>
-                                <th style="text-align: left; padding: 10px 12px;">Payload</th>
-                                <th style="text-align: left; padding: 10px 12px;">Status</th>
+                                <th style="text-align: left; padding: 10px 12px; width: 14%;">Čas</th>
+                                <th style="text-align: left; padding: 10px 12px; width: 14%;">Zdroj / Kanál</th>
+                                <th style="text-align: left; padding: 10px 12px; width: 22%;">Druh Detekce</th>
+                                <th style="text-align: left; padding: 10px 12px; width: 18%;">Odesílatel (Kamera)</th>
+                                <th style="text-align: left; padding: 10px 12px; width: 16%;">MQTT Topic</th>
+                                <th style="text-align: left; padding: 10px 12px; width: 8%;">Payload</th>
+                                <th style="text-align: left; padding: 10px 12px; width: 8%;">Status</th>
                             </tr>
                         </thead>
                         <tbody id="dash-events-tbody">
-                            <tr><td colspan="6" style="text-align: center; padding: 20px; color: #94a3b8;">⏳ Načítání stavu zpráv...</td></tr>
+                            <tr><td colspan="7" style="text-align: center; padding: 20px; color: #94a3b8;">⏳ Načítání stavu zpráv...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1841,16 +1842,30 @@ $active_tab = $_GET['tab'] ?? 'settings';
                 const tbody = document.getElementById('dash-events-tbody');
                 if (tbody && data.status?.recent_actions) {
                     if (data.status.recent_actions.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 20px; color: #94a3b8;">Zatím nebyly zaznamenány žádné události.</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; color: #94a3b8;">Zatím nebyly zaznamenány žádné události.</td></tr>';
                     } else {
                         tbody.innerHTML = data.status.recent_actions.map(act => {
                             const icon = act.event_icon || (act.type === 'trigger' ? '⚡' : (act.type === 'reset' ? '🔄' : (act.type === 'system' ? '⚙️' : 'ℹ️')));
                             const label = act.event_label || act.type || '';
                             const senderDisplay = act.sender ? act.sender : 'system';
                             const targetStr = act.event_details && act.event_details.target_type && act.event_details.target_type !== 'unknown' ? ` <span style="font-size: 0.72rem; opacity: 0.85; background: rgba(111,183,56,0.15); color: #15803d; padding: 1px 5px; border-radius: 4px; font-weight: 600;">${act.event_details.target_type}</span>` : '';
+                            
+                            let sourceBadge = '';
+                            const src = act.source || act.event_details?.source || (act.type === 'reset' ? 'reset' : 'smtp');
+                            if (src === 'isapi') {
+                                sourceBadge = '<span style="background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">⚡ ISAPI (&lt;10ms)</span>';
+                            } else if (src === 'smtp') {
+                                sourceBadge = '<span style="background: #f8fafc; color: #334155; border: 1px solid #cbd5e1; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">✉️ SMTP Email</span>';
+                            } else if (src === 'reset') {
+                                sourceBadge = '<span style="background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 4px;">🔄 Auto-Reset</span>';
+                            } else {
+                                sourceBadge = '<span style="background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 0.76rem;">⚙️ Systém</span>';
+                            }
+
                             return `
                             <tr style="border-bottom: 1px solid #f1f5f9;">
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.82rem;">${act.timestamp || ''}</td>
+                                <td style="padding: 8px 12px;">${sourceBadge}</td>
                                 <td style="padding: 8px 12px;"><span class="lox-badge-info" style="display: inline-flex; align-items: center; gap: 5px;"><span>${icon}</span> <strong>${label}</strong>${targetStr}</span></td>
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem;">${senderDisplay}</td>
                                 <td style="padding: 8px 12px; font-family: monospace; font-size: 0.85rem; color: #0369a1;">${act.topic || ''}</td>

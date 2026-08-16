@@ -830,19 +830,24 @@ class smtp2mqttHandler:
             status = "FAILED"
             
         sender_final = sender if sender else "system"
+        source = "system"
         if action_type == "reset":
+            source = "reset"
             event_type = "reset"
             event_label = "Auto-Reset (0)"
             event_icon = "🔄"
         elif action_type == "system":
+            source = "system"
             event_type = "system"
             event_label = "System Action"
             event_icon = "⚙️"
         elif event_info and event_info.get("event_type"):
+            source = event_info.get("source", "smtp")
             event_type = event_info.get("event_type", "motion")
             event_label = event_info.get("event_label", "Motion Detection")
             event_icon = event_info.get("event_icon", "📹")
         else:
+            source = "smtp"
             event_type = "motion"
             event_label = "Motion Detection"
             event_icon = "📹"
@@ -850,6 +855,7 @@ class smtp2mqttHandler:
         action = {
             "timestamp": timestamp,
             "type": action_type,
+            "source": source,
             "sender": sender_final,
             "topic": topic,
             "payload": payload,

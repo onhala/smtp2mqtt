@@ -8,14 +8,15 @@
   "smtp_connected": false,
   "smtp_status_text": "Inactive",
   "last_publish_success": false,
-  "last_publish_time": "2026-08-16 22:15:18",
+  "last_publish_time": "2026-08-16 22:21:22",
   "processed_messages_count": 0,
   "uptime_seconds": 0,
   "uptime_formatted": "0s",
   "recent_actions": [
     {
-      "timestamp": "2026-08-16 22:15:18",
+      "timestamp": "2026-08-16 22:21:22",
       "type": "system",
+      "source": "system",
       "sender": "system",
       "topic": "MQTT Broker (localhost:1883)",
       "payload": "Offline (Unreachable)",
