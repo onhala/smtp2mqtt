@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -24,9 +25,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # Optional login to Docker Hub to avoid anonymous rate limits (429)
+      - name: Log into Docker Hub (optional)
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+
       - name: Pre-pull Docker PHP Image for UI Linter & Tests
         run: |
-          docker pull php:8.2-cli
+          for i in 1 2 3; do docker pull php:8.2-cli && break || sleep 5; done
 
       - name: Install Dependencies
         run: |

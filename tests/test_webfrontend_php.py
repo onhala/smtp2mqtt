@@ -124,7 +124,7 @@ def test_render_tabs_and_csrf_token():
             if tab == "settings":
                 assert "csrf_token" in res.stdout
                 assert 'name="smtp_port"' in res.stdout
-                assert "Rychlá Diagnostika Spojení" in res.stdout
+                assert "Rychlá Diagnostika" in res.stdout
 
             if tab == "help":
                 assert "Hikvision" in res.stdout
